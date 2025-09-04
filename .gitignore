@@ -1,4 +1,4 @@
 .env
-/api/tmp
+/api/tmp/*
 .DS_Store
-/tmp
+/api/tmp/main

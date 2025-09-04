@@ -123,7 +123,7 @@ func (c *UserController) LineCallbackHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	isSignUpComplete := false
+	isSignUpComplete := true
 	user, err := c.repo.GetUserByLineID(lineID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
