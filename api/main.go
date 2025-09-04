@@ -1,43 +1,36 @@
 package main
 
 import (
-	"fmt"
+	"domeal/model"
+	"domeal/router"
 	"log"
+	"log/slog"
 	"net/http"
-
-	"github.com/gorilla/websocket"
+	"os"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
+func main() {
+	opts := &slog.HandlerOptions{
+		AddSource: true,
+		Level:     slog.LevelDebug,
+	}
 
-func wsHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	// JSONハンドラを作成し、デフォルトのロガーに設定
+	handler := slog.NewJSONHandler(os.Stdout, opts)
+	slog.SetDefault(slog.New(handler))
+
+	conn, err := model.InitDB()
 	if err != nil {
-		log.Println("Upgrade error:", err)
-		return
+		log.Fatal(err)
+		panic(err)
+	}
+	if conn == nil {
+		log.Fatal("Failed to connect to database")
 	}
 	defer conn.Close()
 
-	for {
-		mt, msg, err := conn.ReadMessage()
-		if err != nil {
-			log.Println("Read error:", err)
-			break
-		}
-		log.Printf("Received: %s", msg)
-		conn.WriteMessage(mt, []byte("Echo: "+string(msg)))
-	}
-}
-
-func apiHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello from Go API!")
-}
-
-func main() {
-	http.HandleFunc("/api/hello", apiHandler)
-	http.HandleFunc("/ws/echo", wsHandler)
+	router := router.NewRouter(conn)
+	router.SetupRouter()
 
 	log.Println("Starting server on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))

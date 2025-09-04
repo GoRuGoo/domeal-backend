@@ -1,0 +1,4 @@
+.env
+/api/tmp/*
+.DS_Store
+/api/tmp/main
