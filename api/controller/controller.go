@@ -1,73 +1,52 @@
 package controller
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
-	"fmt"
+	"errors"
+	"io"
 	"log"
+	"log/slog"
 	"net/http"
+	"net/url"
+	"os"
+	"strings"
 
 	"domeal/model"
 
-	"github.com/gorilla/websocket"
+	"github.com/golang-jwt/jwt/v4"
 )
 
-var (
-	upgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-)
-
-// APIHandler はHelloテストのAPIハンドラです
-func APIHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello from Go API!")
+type UserController struct {
+	repo model.UserInterface
 }
 
-// WSHandler はWebSocket接続を処理するハンドラです
-func WSHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("Upgrade error:", err)
-		return
-	}
-	defer conn.Close()
-
-	for {
-		mt, msg, err := conn.ReadMessage()
-		if err != nil {
-			log.Println("Read error:", err)
-			break
-		}
-		log.Printf("Received: %s", msg)
-		conn.WriteMessage(mt, []byte("Echo: "+string(msg)))
+func NewUserController(repo model.UserInterface) *UserController {
+	return &UserController{
+		repo: repo,
 	}
 }
 
 // LineCallbackHandler はLINEログインのコールバックを処理します
-func LineCallbackHandler(w http.ResponseWriter, r *http.Request) {
-	// ========================
-	// 1. 認可コードを受け取る
-	// ========================
+func (c *UserController) LineCallbackHandler(w http.ResponseWriter, r *http.Request) {
+	// 認可コードの取得
 	code := r.URL.Query().Get("code")
-	state := r.URL.Query().Get("state")
-
 	if code == "" {
 		http.Error(w, "Missing code", http.StatusBadRequest)
 		return
 	}
 
 	log.Println("Received code:", code)
-	log.Println("Received state:", state)
 
-	// ========================
-	// 2. LINEのトークンエンドポイントへPOST
-	// ========================
+	// エンドポイントへPOST
 	tokenURL := "https://api.line.me/oauth2/v2.1/token"
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", code)
-	data.Set("redirect_uri", redirectURI)
-	data.Set("client_id", lineClientID)
-	data.Set("client_secret", lineClientSecret)
+	data.Set("redirect_uri", "http://localhost:8080/api/line-callback")
+	data.Set("client_id", os.Getenv("LINE_CLIENT_ID"))
+	data.Set("client_secret", os.Getenv("LINE_CLIENT_SECRET"))
 
 	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
@@ -137,13 +116,108 @@ func LineCallbackHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("User Info (from id_token):", userInfo)
 
-	// ========================
-	// 4. まとめて返却
-	// ========================
-	result := map[string]interface{}{
-		"token": tokenResponse,
-		"user":  userInfo,
+	// LINE IDからユーザーを検索
+	lineID, ok := userInfo["sub"].(string)
+	if !ok {
+		http.Error(w, "Invalid LINE ID", http.StatusBadRequest)
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	isSignUpComplete := false
+	user, err := c.repo.GetUserByLineID(lineID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			isSignUpComplete = false
+		} else {
+			slog.Error("ユーザー登録しているかどうかの判定で論理的ではなくて技術的なエラーが発生した｡接続などを確認すべき｡", "error", err)
+			http.Error(w, "ユーザ登録系でエラーが起きました", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	var sessionID string
+
+	if isSignUpComplete {
+		slog.Info("ユーザーが登録済みなので更新のみ行います")
+		//ユーザーがすでにこれまでにサービスを使っていたら更新のみ
+		// トランザクション開始
+		tx, err := c.repo.BeginTx(context.Background(), nil)
+		if err != nil {
+			slog.Error("トランザクションの開始に失敗した｡技術的な問題を確認すべき", "error", err)
+			http.Error(w, "Failed to begin transaction", http.StatusInternalServerError)
+			return
+		}
+		defer tx.Rollback()
+
+		// セッション更新
+		sessionID, err = c.repo.UpdateSessionIfExists(tx, user.ID)
+		if err != nil {
+			slog.Error("セッションの更新に失敗した｡技術的な問題を確認すべき", "error", err)
+			http.Error(w, "Failed to update session", http.StatusInternalServerError)
+			return
+		}
+
+		err = c.repo.UpdateToken(tx, user.ID, tokenResponse.AccessToken, tokenResponse.RefreshToken)
+		if err != nil {
+			slog.Error("トークンの更新に失敗した｡レコードの確認または技術的な問題を確認すべき｡", "error", err)
+			http.Error(w, "Failed to update token", http.StatusInternalServerError)
+			return
+		}
+
+		if err := tx.Commit(); err != nil {
+			slog.Error("トランザクションのコミットに失敗した｡技術的な問題を確認すべき", "error", err)
+			http.Error(w, "Failed to commit transaction", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// ユーザーが存在しない場合、新規登録
+		slog.Info("ユーザーが存在しないため新規登録を行います")
+		// トランザクション開始
+		tx, err := c.repo.BeginTx(context.Background(), nil)
+		if err != nil {
+			http.Error(w, "Failed to begin transaction", http.StatusInternalServerError)
+			return
+		}
+		defer tx.Rollback()
+
+		// ユーザー情報をデータベースに保存
+		userID, err := c.repo.SaveUserInfo(tx, userInfo)
+		if err != nil {
+			http.Error(w, "Failed to save user info", http.StatusInternalServerError)
+			return
+		}
+
+		// トークン情報を保存
+		err = c.repo.SaveUserToken(tx, userID, tokenResponse.AccessToken, tokenResponse.RefreshToken)
+		if err != nil {
+			http.Error(w, "Failed to save user token", http.StatusInternalServerError)
+			return
+		}
+
+		// セッション作成
+		sessionID, err = c.repo.CreateSession(tx, userID)
+		if err != nil {
+			http.Error(w, "Failed to create session", http.StatusInternalServerError)
+			return
+		}
+
+		if err := tx.Commit(); err != nil {
+			http.Error(w, "Failed to commit transaction", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// HTTP Only CookieにセッションIDをセット
+	cookie := &http.Cookie{
+		Name:     "session_id",
+		Value:    sessionID,
+		HttpOnly: true,
+		Secure:   false, // 開発環境ではfalse、本番環境ではtrueに設定
+		SameSite: http.SameSiteLaxMode,
+		Path:     "/",
+		MaxAge:   30 * 24 * 60 * 60, // 30日
+	}
+	http.SetCookie(w, cookie)
+
+	http.Redirect(w, r, "https://www.google.com", http.StatusTemporaryRedirect)
+}

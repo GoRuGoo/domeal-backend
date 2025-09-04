@@ -1,3 +1,4 @@
 .env
 /api/tmp
 .DS_Store
+/tmp
