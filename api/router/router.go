@@ -28,4 +28,8 @@ func (r *Router) SetupRouter() {
 		"/api/create-group",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(groupController.CreateGroupController)),
 	)
+	http.Handle(
+		"/api/join-group",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(groupController.JoinGroupController)),
+	)
 }
