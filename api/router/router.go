@@ -21,11 +21,11 @@ func NewRouter(db *sql.DB) *Router {
 func (r *Router) SetupRouter() {
 	repo := model.NewRepository(r.db)
 	userController := controller.NewUserController(repo)
-	roomController := controller.NewRoomController(repo)
+	groupController := controller.NewGroupController(repo)
 
 	http.HandleFunc("/api/line-callback", userController.LineCallbackHandler)
 	http.Handle(
-		"/api/create-room",
-		middleware.AuthMiddleware(r.db)(http.HandlerFunc(roomController.CreateRoomController)),
+		"/api/create-group",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(groupController.CreateGroupController)),
 	)
 }
