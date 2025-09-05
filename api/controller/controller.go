@@ -44,7 +44,7 @@ func (c *UserController) LineCallbackHandler(w http.ResponseWriter, r *http.Requ
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", code)
-	data.Set("redirect_uri", "http://localhost:8080/api/line-callback")
+	data.Set("redirect_uri", "http://localhost/api/line-callback")
 	data.Set("client_id", os.Getenv("LINE_CLIENT_ID"))
 	data.Set("client_secret", os.Getenv("LINE_CLIENT_SECRET"))
 
