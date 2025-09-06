@@ -37,4 +37,8 @@ func (r *Router) SetupRouter() {
 		"/api/issue-signed-receipt",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.IssueSignedS3URLHandler)),
 	)
+	http.Handle(
+		"/api/confirm-upload-and-start-ocr",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.ConfirmUploadAndStartOCRHandler)),
+	)
 }
