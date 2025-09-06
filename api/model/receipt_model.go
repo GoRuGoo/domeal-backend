@@ -18,13 +18,14 @@ type ReceiptInterface interface {
 }
 
 type PurchaseItem struct {
-	ID        int64     `json:"id"`
-	ReceiptID int64     `json:"receipt_id"`
-	GroupID   int64     `json:"group_id"`
-	ItemName  string    `json:"item_name"`
-	Price     float64   `json:"price"`
-	Quantity  int       `json:"quantity"`
-	CreatedAt time.Time `json:"created_at"`
+	ID              int64     `json:"id"`
+	ReceiptID       int64     `json:"receipt_id"`
+	GroupID         int64     `json:"group_id"`
+	ItemName        string    `json:"item_name"`
+	PredictItemName string    `json:"predict_item_name"`
+	Price           float64   `json:"price"`
+	Quantity        int       `json:"quantity"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type Receipt struct {
@@ -180,8 +181,8 @@ func (repo *Repository) GetReceiptObjectKeyByGroupID(groupID int64) (string, err
 
 func (repo *Repository) SavePurchaseItems(tx *sql.Tx, receiptID, groupID int64, items []PurchaseItem) error {
 	query := `
-		INSERT INTO purchase_items (receipt_id, group_id, item_name, price, quantity, created_at)
-		VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+		INSERT INTO purchase_items (receipt_id, group_id, item_name, predict_item_name, price, quantity, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
 	`
 
 	stmt, err := tx.Prepare(query)
@@ -191,7 +192,7 @@ func (repo *Repository) SavePurchaseItems(tx *sql.Tx, receiptID, groupID int64, 
 	defer stmt.Close()
 
 	for _, item := range items {
-		_, err = stmt.Exec(receiptID, groupID, item.ItemName, item.Price, item.Quantity)
+		_, err = stmt.Exec(receiptID, groupID, item.ItemName, item.PredictItemName, item.Price, item.Quantity)
 		if err != nil {
 			return err
 		}

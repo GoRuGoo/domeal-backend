@@ -345,14 +345,15 @@ func (c *ReceiptController) performOCRWithChatGPT(imageURL string) (string, erro
 								"date": "日付",
 								"total": 合計金額(数値),
 								"items": [
-
-									"name": "商品名",
+									{
+									"name": "商品名（レシートに記載されている正確な文字列）",
+									"predict_name": "商品の予想される正式名称（略語や途切れた名前を補完した推測）",
 									"price": 価格(数値),
 									"quantity": 数量(数値、記載がない場合は1)
 									}
 								]
 								}
-								数値は必ず数字のみで回答してください。JSONの形式を厳密に守ってください。`,
+								数値は必ず数字のみで回答してください。predict_nameは商品名が途切れている場合や略語の場合に正式名称を推測して入力してください。それ以外の場合(商品名が途切れることなく適切に確認できる)は､predict_item_nameにいれる必要はないです｡JSONの形式を厳密に守ってください。`,
 						},
 						{
 							Type: openai.ChatMessagePartTypeImageURL,
@@ -382,9 +383,10 @@ type OCRReceiptData struct {
 }
 
 type OCRPurchaseItem struct {
-	Name     string  `json:"name"`
-	Price    float64 `json:"price"`
-	Quantity int     `json:"quantity"`
+	Name        string  `json:"name"`
+	PredictName string  `json:"predict_name"`
+	Price       float64 `json:"price"`
+	Quantity    int     `json:"quantity"`
 }
 
 // OCRReceiptData はOCR結果の構造体
@@ -400,11 +402,12 @@ func (c *ReceiptController) saveOCRResultToDB(tx *sql.Tx, receiptID, groupID int
 	var purchaseItems []model.PurchaseItem
 	for _, item := range receiptData.Items {
 		purchaseItems = append(purchaseItems, model.PurchaseItem{
-			ReceiptID: receiptID,
-			GroupID:   groupID,
-			ItemName:  item.Name,
-			Price:     item.Price,
-			Quantity:  item.Quantity,
+			ReceiptID:       receiptID,
+			GroupID:         groupID,
+			ItemName:        item.Name,
+			PredictItemName: item.PredictName,
+			Price:           item.Price,
+			Quantity:        item.Quantity,
 		})
 	}
 
