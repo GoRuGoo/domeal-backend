@@ -24,6 +24,7 @@ func (r *Router) SetupRouter() {
 	groupController := controller.NewGroupController(repo)
 
 	http.HandleFunc("/api/line-callback", userController.LineCallbackHandler)
+	http.HandleFunc("/api/check-login-status", userController.CheckLoginStatusHandler)
 	http.Handle(
 		"/api/create-group",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(groupController.CreateGroupController)),

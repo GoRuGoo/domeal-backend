@@ -26,6 +26,7 @@ type UserInterface interface {
 	UpdateSessionIfExists(tx *sql.Tx, userID int64) (string, error)
 	UpdateToken(tx *sql.Tx, userID int64, accessToken, refreshToken string) error
 	SaveUserToken(tx *sql.Tx, userID int64, accessToken, refreshToken string) error
+	GetUserBySessionToken(sessionToken string) (*User, error)
 }
 
 type User struct {
@@ -233,4 +234,45 @@ func (repo *Repository) SaveUserToken(tx *sql.Tx, userID int64, accessToken, ref
 	}
 
 	return nil
+}
+
+func (repo *Repository) GetUserBySessionToken(sessionToken string) (*User, error) {
+	query := `
+		SELECT
+			u.id, u.line_sub, u.display_name, u.picture_url
+		FROM
+			users u
+		INNER
+			JOIN sessions s ON u.id = s.user_id
+		WHERE
+			s.session_token = $1 AND s.last_used_at > NOW() - INTERVAL '30 days'
+	`
+
+	stmt, err := repo.db.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	var user User
+	var pictureURL sql.NullString
+	err = stmt.QueryRow(sessionToken).Scan(
+		&user.ID,
+		&user.LineID,
+		&user.Name,
+		&pictureURL,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, errors.New("session not found or expired")
+		}
+		return nil, err
+	}
+
+	if pictureURL.Valid {
+		user.Picture = pictureURL.String
+	}
+
+	return &user, nil
 }
