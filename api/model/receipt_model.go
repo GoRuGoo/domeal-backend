@@ -12,6 +12,7 @@ type ReceiptInterface interface {
 	GetReceiptByID(receiptID int64) (*Receipt, error)
 	UpdateReceiptUploadStatus(tx *sql.Tx, receiptID int64, isUploaded bool) error
 	IsUserInGroup(groupID, userID int64) (bool, error)
+	GetReceiptObjectKeyByGroupID(groupID int64) (string, error)
 }
 
 type Receipt struct {
@@ -135,4 +136,32 @@ func (repo *Repository) IsUserInGroup(groupID, userID int64) (bool, error) {
 	}
 
 	return exists, nil
+}
+
+func (repo *Repository) GetReceiptObjectKeyByGroupID(groupID int64) (string, error) {
+	query := `
+		SELECT
+			file_key
+		FROM
+			receipts
+		WHERE
+			group_id=$1
+		ORDER BY
+			created_at DESC
+		LIMIT 1
+	`
+
+	stmt, err := repo.db.Prepare(query)
+	if err != nil {
+		return "", err
+	}
+	defer stmt.Close()
+
+	var fileKey string
+	err = stmt.QueryRow(groupID).Scan(&fileKey)
+	if err != nil {
+		return "", err
+	}
+
+	return fileKey, nil
 }
