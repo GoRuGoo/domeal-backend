@@ -221,3 +221,89 @@ func (c *UserController) LineCallbackHandler(w http.ResponseWriter, r *http.Requ
 
 	http.Redirect(w, r, "https://www.google.com", http.StatusTemporaryRedirect)
 }
+
+// CheckLoginStatusResponse はログイン状態確認のレスポンス構造体
+type CheckLoginStatusResponse struct {
+	IsLoggedIn bool   `json:"is_logged_in"`
+	User       *User  `json:"user,omitempty"`
+	Message    string `json:"message"`
+}
+
+// User はフロントエンド用のユーザー構造体
+type User struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Picture string `json:"picture"`
+}
+
+// CheckLoginStatusHandler はログイン状態を確認するハンドラです
+func (c *UserController) CheckLoginStatusHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		slog.Error("Invalid method", "method", r.Method)
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Cookieからセッション情報を取得
+	cookie, err := r.Cookie("session_id")
+	if err != nil {
+		// Cookieが存在しない場合
+		response := CheckLoginStatusResponse{
+			IsLoggedIn: false,
+			Message:    "Not logged in",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// セッショントークンでユーザーを検索
+	user, err := c.repo.GetUserBySessionToken(cookie.Value)
+	if err != nil {
+		// セッションが無効または期限切れ
+		slog.Info("Invalid or expired session", "session_token", cookie.Value, "error", err)
+
+		// Cookieを削除
+		expiredCookie := &http.Cookie{
+			Name:     "session_id",
+			Value:    "",
+			HttpOnly: true,
+			Secure:   false,
+			SameSite: http.SameSiteLaxMode,
+			Path:     "/",
+			MaxAge:   -1, // 削除
+		}
+		http.SetCookie(w, expiredCookie)
+
+		response := CheckLoginStatusResponse{
+			IsLoggedIn: false,
+			Message:    "Session expired",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// ログイン済み
+	response := CheckLoginStatusResponse{
+		IsLoggedIn: true,
+		User: &User{
+			ID:      user.ID,
+			Name:    user.Name,
+			Picture: user.Picture,
+		},
+		Message: "Logged in",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode response", "error", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("Login status checked", "user_id", user.ID, "status", response.IsLoggedIn)
+}
