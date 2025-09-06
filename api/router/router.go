@@ -22,6 +22,7 @@ func (r *Router) SetupRouter() {
 	repo := model.NewRepository(r.db)
 	userController := controller.NewUserController(repo)
 	groupController := controller.NewGroupController(repo)
+	receiptController := controller.NewReceiptController(repo)
 
 	http.HandleFunc("/api/line-callback", userController.LineCallbackHandler)
 	http.Handle(
@@ -31,5 +32,9 @@ func (r *Router) SetupRouter() {
 	http.Handle(
 		"/api/join-group",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(groupController.JoinGroupController)),
+	)
+	http.Handle(
+		"/api/issue-signed-receipt",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.IssueSignedS3URLHandler)),
 	)
 }
