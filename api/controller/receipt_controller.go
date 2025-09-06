@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
+	"github.com/sashabaranov/go-openai"
 )
 
 type ReceiptController struct {
@@ -264,6 +265,29 @@ func (c *ReceiptController) ConfirmUploadAndStartOCRHandler(w http.ResponseWrite
 		return
 	}
 
+	// OCRに送るためにオブジェクトキーを取得
+	objectKey, err := c.repo.GetReceiptObjectKeyByGroupID(receipt.GroupID)
+	if err != nil {
+		slog.Error("Failed to get receipt object key", "group_id", receipt.GroupID, "error", err)
+		http.Error(w, "Failed to get receipt object key", http.StatusInternalServerError)
+		return
+	}
+
+	imageURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", os.Getenv("S3_BUCKET_NAME"), os.Getenv("AWS_REGION"), objectKey)
+
+	// ChatGPT APIでOCR処理を実行
+	ocrResult, err := c.performOCRWithChatGPT(imageURL)
+	if err != nil {
+		slog.Error("Failed to perform OCR", "image_url", imageURL, "error", err)
+		// OCRエラーでもレスポンスは返す（アップロードは成功）
+	} else {
+		// OCR結果をログに出力（実際のプロジェクトではデータベースに保存）
+		slog.Info("OCR completed successfully",
+			"receipt_id", req.ReceiptID,
+			"group_id", receipt.GroupID,
+			"ocr_result", ocrResult)
+	}
+
 	// トランザクションをコミット
 	if err := tx.Commit(); err != nil {
 		slog.Error("Failed to commit transaction", "error", err)
@@ -290,4 +314,62 @@ func (c *ReceiptController) ConfirmUploadAndStartOCRHandler(w http.ResponseWrite
 		"user_id", userID,
 		"receipt_id", req.ReceiptID,
 		"group_id", receipt.GroupID)
+}
+
+// performOCRWithChatGPT はChatGPT APIを使用してOCR処理を行います
+func (c *ReceiptController) performOCRWithChatGPT(imageURL string) (string, error) {
+	openaiAPIKey := os.Getenv("OPENAI_API_KEY")
+	if openaiAPIKey == "" {
+		return "", fmt.Errorf("OPENAI_API_KEY environment variable is not set")
+	}
+
+	client := openai.NewClient(openaiAPIKey)
+
+	resp, err := client.CreateChatCompletion(
+		context.Background(),
+		openai.ChatCompletionRequest{
+			Model: openai.GPT4VisionPreview,
+			Messages: []openai.ChatCompletionMessage{
+				{
+					Role: openai.ChatMessageRoleUser,
+					MultiContent: []openai.ChatMessagePart{
+						{
+							Type: openai.ChatMessagePartTypeText,
+							Text: `この画像はレシートです。以下のJSON形式で商品情報を抽出してください：
+{
+  "store_name": "店舗名",
+  "date": "日付",
+  "total": 合計金額(数値),
+  "items": [
+    {
+      "name": "商品名",
+      "price": 価格(数値),
+      "quantity": 数量(数値、記載がない場合は1)
+    }
+  ]
+}
+数値は必ず数字のみで回答してください。JSONの形式を厳密に守ってください。`,
+						},
+						{
+							Type: openai.ChatMessagePartTypeImageURL,
+							ImageURL: &openai.ChatMessageImageURL{
+								URL: imageURL,
+							},
+						},
+					},
+				},
+			},
+			MaxTokens: 1500,
+		},
+	)
+
+	if err != nil {
+		return "", fmt.Errorf("failed to call OpenAI API: %w", err)
+	}
+
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("no response from OpenAI API")
+	}
+
+	return resp.Choices[0].Message.Content, nil
 }
