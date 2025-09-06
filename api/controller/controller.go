@@ -219,7 +219,7 @@ func (c *UserController) LineCallbackHandler(w http.ResponseWriter, r *http.Requ
 	}
 	http.SetCookie(w, cookie)
 
-	http.Redirect(w, r, "https://www.google.com", http.StatusTemporaryRedirect)
+	http.Redirect(w, r, os.Getenv("AFTER_LOGIN_REDIRECT_URL"), http.StatusTemporaryRedirect)
 }
 
 // CheckLoginStatusResponse はログイン状態確認のレスポンス構造体
