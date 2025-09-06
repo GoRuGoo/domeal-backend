@@ -13,6 +13,18 @@ type ReceiptInterface interface {
 	UpdateReceiptUploadStatus(tx *sql.Tx, receiptID int64, isUploaded bool) error
 	IsUserInGroup(groupID, userID int64) (bool, error)
 	GetReceiptObjectKeyByGroupID(groupID int64) (string, error)
+	SavePurchaseItems(tx *sql.Tx, receiptID, groupID int64, items []PurchaseItem) error
+	UpdateReceiptOCRStatus(tx *sql.Tx, receiptID int64, status string) error
+}
+
+type PurchaseItem struct {
+	ID        int64     `json:"id"`
+	ReceiptID int64     `json:"receipt_id"`
+	GroupID   int64     `json:"group_id"`
+	ItemName  string    `json:"item_name"`
+	Price     float64   `json:"price"`
+	Quantity  int       `json:"quantity"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Receipt struct {
@@ -164,4 +176,43 @@ func (repo *Repository) GetReceiptObjectKeyByGroupID(groupID int64) (string, err
 	}
 
 	return fileKey, nil
+}
+
+func (repo *Repository) SavePurchaseItems(tx *sql.Tx, receiptID, groupID int64, items []PurchaseItem) error {
+	query := `
+		INSERT INTO purchase_items (receipt_id, group_id, item_name, price, quantity, created_at)
+		VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+	`
+
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, item := range items {
+		_, err = stmt.Exec(receiptID, groupID, item.ItemName, item.Price, item.Quantity)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (repo *Repository) UpdateReceiptOCRStatus(tx *sql.Tx, receiptID int64, status string) error {
+	query := `
+		UPDATE receipts
+		SET ocr_status = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`
+
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(status, receiptID)
+	return err
 }

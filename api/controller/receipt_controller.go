@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"database/sql"
 	"domeal/middleware"
 	"domeal/model"
 	"encoding/json"
@@ -281,11 +282,15 @@ func (c *ReceiptController) ConfirmUploadAndStartOCRHandler(w http.ResponseWrite
 		slog.Error("Failed to perform OCR", "image_url", imageURL, "error", err)
 		// OCRエラーでもレスポンスは返す（アップロードは成功）
 	} else {
-		// OCR結果をログに出力（実際のプロジェクトではデータベースに保存）
-		slog.Info("OCR completed successfully",
-			"receipt_id", req.ReceiptID,
-			"group_id", receipt.GroupID,
-			"ocr_result", ocrResult)
+		// OCR結果をパースしてデータベースに保存
+		if err := c.saveOCRResultToDB(tx, req.ReceiptID, receipt.GroupID, ocrResult); err != nil {
+			slog.Error("Failed to save OCR result to database", "receipt_id", req.ReceiptID, "error", err)
+			// データベース保存エラーでもトランザクションは継続
+		} else {
+			slog.Info("OCR completed and saved successfully",
+				"receipt_id", req.ReceiptID,
+				"group_id", receipt.GroupID)
+		}
 	}
 
 	// トランザクションをコミット
@@ -328,7 +333,7 @@ func (c *ReceiptController) performOCRWithChatGPT(imageURL string) (string, erro
 	resp, err := client.CreateChatCompletion(
 		context.Background(),
 		openai.ChatCompletionRequest{
-			Model: openai.GPT4VisionPreview,
+			Model: "gpt-5-nano",
 			Messages: []openai.ChatCompletionMessage{
 				{
 					Role: openai.ChatMessageRoleUser,
@@ -336,19 +341,18 @@ func (c *ReceiptController) performOCRWithChatGPT(imageURL string) (string, erro
 						{
 							Type: openai.ChatMessagePartTypeText,
 							Text: `この画像はレシートです。以下のJSON形式で商品情報を抽出してください：
-{
-  "store_name": "店舗名",
-  "date": "日付",
-  "total": 合計金額(数値),
-  "items": [
-    {
-      "name": "商品名",
-      "price": 価格(数値),
-      "quantity": 数量(数値、記載がない場合は1)
-    }
-  ]
-}
-数値は必ず数字のみで回答してください。JSONの形式を厳密に守ってください。`,
+								{
+								"date": "日付",
+								"total": 合計金額(数値),
+								"items": [
+
+									"name": "商品名",
+									"price": 価格(数値),
+									"quantity": 数量(数値、記載がない場合は1)
+									}
+								]
+								}
+								数値は必ず数字のみで回答してください。JSONの形式を厳密に守ってください。`,
 						},
 						{
 							Type: openai.ChatMessagePartTypeImageURL,
@@ -359,7 +363,6 @@ func (c *ReceiptController) performOCRWithChatGPT(imageURL string) (string, erro
 					},
 				},
 			},
-			MaxTokens: 1500,
 		},
 	)
 
@@ -372,4 +375,52 @@ func (c *ReceiptController) performOCRWithChatGPT(imageURL string) (string, erro
 	}
 
 	return resp.Choices[0].Message.Content, nil
+}
+
+type OCRReceiptData struct {
+	Items []OCRPurchaseItem `json:"items"`
+}
+
+type OCRPurchaseItem struct {
+	Name     string  `json:"name"`
+	Price    float64 `json:"price"`
+	Quantity int     `json:"quantity"`
+}
+
+// OCRReceiptData はOCR結果の構造体
+func (c *ReceiptController) saveOCRResultToDB(tx *sql.Tx, receiptID, groupID int64, ocrResult string) error {
+	// OCR結果をJSONとしてパース
+	var receiptData OCRReceiptData
+	if err := json.Unmarshal([]byte(ocrResult), &receiptData); err != nil {
+		slog.Error("Failed to parse OCR result as JSON", "error", err, "ocr_result", ocrResult)
+		return fmt.Errorf("failed to parse OCR result: %w", err)
+	}
+
+	// 購入商品をpurchase_itemsテーブルに保存
+	var purchaseItems []model.PurchaseItem
+	for _, item := range receiptData.Items {
+		purchaseItems = append(purchaseItems, model.PurchaseItem{
+			ReceiptID: receiptID,
+			GroupID:   groupID,
+			ItemName:  item.Name,
+			Price:     item.Price,
+			Quantity:  item.Quantity,
+		})
+	}
+
+	if err := c.repo.SavePurchaseItems(tx, receiptID, groupID, purchaseItems); err != nil {
+		return fmt.Errorf("failed to save purchase items: %w", err)
+	}
+
+	// OCRステータスを "completed" に更新
+	if err := c.repo.UpdateReceiptOCRStatus(tx, receiptID, "completed"); err != nil {
+		return fmt.Errorf("failed to update OCR status: %w", err)
+	}
+
+	slog.Info("OCR result saved to database successfully",
+		"receipt_id", receiptID,
+		"group_id", groupID,
+		"items_count", len(purchaseItems))
+
+	return nil
 }
