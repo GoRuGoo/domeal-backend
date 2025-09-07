@@ -39,5 +39,15 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
 
+  redis:
+    image: redis:8.2.1-alpine
+    container_name: redis
+    tty: true
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
+
 volumes:
   postgres-data:
+  redis-data:
