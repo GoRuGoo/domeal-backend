@@ -35,6 +35,10 @@ func (r *Router) SetupRouter() {
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(groupController.JoinGroupController)),
 	)
 	http.Handle(
+		"/api/groups",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(groupController.GetGroupsHandler)),
+	)
+	http.Handle(
 		"/api/issue-signed-receipt",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.IssueSignedS3URLHandler)),
 	)

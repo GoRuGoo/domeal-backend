@@ -10,6 +10,7 @@ type GroupInterface interface {
 	AddGroupMember(tx *sql.Tx, groupID, userID int64, isOwner bool) error
 	GetGroup(groupID int64) (*Group, error)
 	IsGroupMember(groupID, userID int64) (bool, error)
+	GetAllGroups() ([]*Group, error)
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
@@ -130,4 +131,56 @@ func (repo *Repository) IsGroupMember(groupID, userID int64) (bool, error) {
 	}
 
 	return count > 0, nil
+}
+
+func (repo *Repository) GetAllGroups() ([]*Group, error) {
+	query := `
+		SELECT
+			id, name, menu, menu_image_url, created_by
+		FROM
+			groups
+		ORDER BY
+			created_at DESC
+	`
+
+	stmt, err := repo.db.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	rows, err := stmt.Query()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var groups []*Group
+	for rows.Next() {
+		var group Group
+		var menuImageURL sql.NullString
+
+		err := rows.Scan(
+			&group.ID,
+			&group.Name,
+			&group.Menu,
+			&menuImageURL,
+			&group.CreatedBy,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if menuImageURL.Valid {
+			group.MenuImageURL = menuImageURL.String
+		}
+
+		groups = append(groups, &group)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return groups, nil
 }

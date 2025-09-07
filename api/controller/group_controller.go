@@ -243,3 +243,46 @@ func (c *GroupController) JoinGroupController(w http.ResponseWriter, r *http.Req
 
 	slog.Info("User joined group successfully", "group_id", req.GroupID, "user_id", userID)
 }
+
+type GetGroupsResponse struct {
+	Groups []*model.Group `json:"groups"`
+}
+
+func (c *GroupController) GetGroupsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		slog.Error("Invalid method", "method", r.Method)
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// ミドルウェアで設定されたユーザーIDを取得（認証確認のため）
+	_, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		slog.Error("ミドルウェアからユーザー情報を取得できませんでした｡Cookieなどを確認すべき｡")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// すべてのグループ一覧を取得
+	groups, err := c.repo.GetAllGroups()
+	if err != nil {
+		slog.Error("Failed to get all groups", "error", err)
+		http.Error(w, "Failed to get groups", http.StatusInternalServerError)
+		return
+	}
+
+	// レスポンスを作成
+	response := GetGroupsResponse{
+		Groups: groups,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode response", "error", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("All groups retrieved successfully", "groups_count", len(groups))
+}
