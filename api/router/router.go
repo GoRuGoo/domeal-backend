@@ -42,6 +42,10 @@ func (r *Router) SetupRouter() http.Handler {
 	userController := controller.NewUserController(repo)
 	groupController := controller.NewGroupController(repo)
 	receiptController := controller.NewReceiptController(repo)
+	roleController := controller.NewRoleController(repo)
+
+	// TODO: Redisの設定が必要
+	// roleController := controller.NewRoleController(repo, redisRepo)
 
 	mux := http.NewServeMux()
 
@@ -64,6 +68,11 @@ func (r *Router) SetupRouter() http.Handler {
 	)
 	mux.Handle("/api/confirm-upload-and-start-ocr",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.ConfirmUploadAndStartOCRHandler)),
+	)
+
+	http.Handle(
+		"/ws/role-division",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(roleController.RoleDivisionController)),
 	)
 
 	// CORS設定で最外層をラップ

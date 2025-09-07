@@ -10,18 +10,36 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+//type RoleController struct {
+//	repo      model.RoleInterface
+//	groupRepo model.GroupInterface
+//	rdb       model.RoleRedisInterface
+//	upgrader  websocket.Upgrader
+//}
+//
+//func NewRoleController(repo model.RoleInterface, groupRepo model.GroupInterface, rdb model.RoleRedisInterface) *RoleController {
+//	return &RoleController{
+//		repo:      repo,
+//		groupRepo: groupRepo,
+//		rdb:       rdb,
+//		upgrader: websocket.Upgrader{
+//			CheckOrigin: func(r *http.Request) bool {
+//				// 開発環境では全てのオリジンを許可
+//				// 本番環境では適切なオリジンチェックを実装してください
+//				return true
+//			},
+//		},
+//	}
+//}
+
 type RoleController struct {
-	repo      model.RoleInterface
-	groupRepo model.GroupInterface
-	rdb       model.RoleRedisInterface
 	upgrader  websocket.Upgrader
+	groupRepo model.GroupInterface
 }
 
-func NewRoleController(repo model.RoleInterface, groupRepo model.GroupInterface, rdb model.RoleRedisInterface) *RoleController {
+func NewRoleController(groupRepo model.GroupInterface) *RoleController {
 	return &RoleController{
-		repo:      repo,
 		groupRepo: groupRepo,
-		rdb:       rdb,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				// 開発環境では全てのオリジンを許可
@@ -85,5 +103,35 @@ func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.R
 	defer conn.Close()
 
 	slog.Info("WebSocket connection established")
+
+	// シンプルなメッセージ受信ループ
+	c.handleMessages(conn, groupID, userID)
+}
+
+// handleMessages はWebSocketからのメッセージを受信してログに出力する
+func (c *RoleController) handleMessages(conn *websocket.Conn, groupID, userID int64) {
+	for {
+		// メッセージを読み取り
+		_, message, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				slog.Error("WebSocket unexpected close error", "error", err)
+			} else {
+				slog.Info("WebSocket connection closed", "error", err)
+			}
+		}
+
+		// 受信したJSONメッセージをログに出力
+		slog.Info("Received WebSocket message",
+			"group_id", groupID,
+			"user_id", userID,
+			"message", string(message))
+
+		err = conn.WriteMessage(websocket.TextMessage, message)
+		if err != nil {
+			slog.Error("Failed to send text message", "error", err)
+			break
+		}
+	}
 
 }
