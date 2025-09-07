@@ -14,12 +14,20 @@ type GroupInterface interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
+type GroupMember struct {
+	UserID      int64  `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	PictureURL  string `json:"picture_url"`
+	IsOwner     bool   `json:"is_owner"`
+}
+
 type Group struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	Menu         string `json:"menu"`
-	MenuImageURL string `json:"menu_image_url"`
-	CreatedBy    int64  `json:"created_by"`
+	ID           int64          `json:"id"`
+	Name         string         `json:"name"`
+	Menu         string         `json:"menu"`
+	MenuImageURL string         `json:"menu_image_url"`
+	CreatedBy    int64          `json:"created_by"`
+	Members      []*GroupMember `json:"members"`
 }
 
 func (repo *Repository) CreateGroup(tx *sql.Tx, group *Group) (int64, error) {
@@ -175,6 +183,13 @@ func (repo *Repository) GetAllGroups() ([]*Group, error) {
 			group.MenuImageURL = menuImageURL.String
 		}
 
+		// グループのメンバー情報を取得
+		members, err := repo.getGroupMembers(group.ID)
+		if err != nil {
+			return nil, err
+		}
+		group.Members = members
+
 		groups = append(groups, &group)
 	}
 
@@ -183,4 +198,59 @@ func (repo *Repository) GetAllGroups() ([]*Group, error) {
 	}
 
 	return groups, nil
+}
+
+func (repo *Repository) getGroupMembers(groupID int64) ([]*GroupMember, error) {
+	query := `
+		SELECT
+			u.id, u.display_name, u.picture_url, gm.is_owner
+		FROM
+			users u
+		INNER JOIN
+			group_members gm ON u.id = gm.user_id
+		WHERE
+			gm.group_id = $1
+		ORDER BY
+			gm.is_owner DESC, u.display_name ASC
+	`
+
+	stmt, err := repo.db.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	rows, err := stmt.Query(groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var members []*GroupMember
+	for rows.Next() {
+		var member GroupMember
+		var pictureURL sql.NullString
+
+		err := rows.Scan(
+			&member.UserID,
+			&member.DisplayName,
+			&pictureURL,
+			&member.IsOwner,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if pictureURL.Valid {
+			member.PictureURL = pictureURL.String
+		}
+
+		members = append(members, &member)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return members, nil
 }
