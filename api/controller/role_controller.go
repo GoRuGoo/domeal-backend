@@ -10,33 +10,38 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// RoleController はWebSocketを管理するためのコントローラー
 type RoleController struct {
 	upgrader  websocket.Upgrader
 	groupRepo model.GroupInterface
-	hub       *Hub
+	groupHubs map[int64]*Hub // group別にHubを持つ
 }
 
-// コンストラクタ
-func NewRoleController(groupRepo model.GroupInterface, hub *Hub) *RoleController {
+func NewRoleController(groupRepo model.GroupInterface) *RoleController {
 	return &RoleController{
 		groupRepo: groupRepo,
-		hub:       hub,
+		groupHubs: make(map[int64]*Hub),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
-				// 開発環境では全てのオリジンを許可
-				// 本番環境では適切なオリジンチェックを実装してください
 				return true
 			},
 		},
 	}
 }
 
-// RoleDivisionController はWebSocket接続を受け付けるハンドラ
+func (c *RoleController) getOrCreateGroupHub(groupID int64) *Hub {
+	hub, exists := c.groupHubs[groupID]
+	if !exists {
+		hub = NewHub()
+		c.groupHubs[groupID] = hub
+		go hub.Run() // 新しいHubのgoroutineを開始
+		slog.Info("Created new hub for group", "group_id", groupID)
+	}
+	return hub
+}
+
 func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// ユーザー情報をミドルウェアから取得
 	tmpUser, ok := middleware.GetUserFromContext(ctx)
 	if !ok {
 		slog.Error("ミドルウェアからユーザー情報を取得できませんでした｡Cookieなどを確認すべき｡")
@@ -45,7 +50,6 @@ func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.R
 	}
 	userID := int64(tmpUser.ID)
 
-	// クエリパラメータから group_id を取得
 	groupIDStr := r.URL.Query().Get("group_id")
 	if groupIDStr == "" {
 		slog.Error("group_id parameter is required")
@@ -60,7 +64,6 @@ func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// ユーザーがグループに所属しているかチェック
 	isMember, err := c.groupRepo.IsGroupMember(groupID, userID)
 	if err != nil {
 		slog.Error("Failed to check group membership", "group_id", groupID, "user_id", userID, "error", err)
@@ -78,7 +81,6 @@ func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.R
 		"group_id", groupID,
 		"user_id", userID)
 
-	// WebSocketにアップグレード
 	conn, err := c.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("Failed to upgrade connection", slog.String("error", err.Error()))
@@ -86,8 +88,16 @@ func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Hubの構造体に接続を追加しておく
-	client := &Client{hub: c.hub, conn: conn, send: make(chan []byte, 256)}
+	// groupID別のHubを取得または作成
+	hub := c.getOrCreateGroupHub(groupID)
+
+	client := &Client{
+		hub:     hub,
+		conn:    conn,
+		send:    make(chan []byte, 256),
+		groupID: groupID,
+		userID:  userID,
+	}
 	client.hub.register <- client
 
 	go client.readExecution()
@@ -95,9 +105,11 @@ func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.R
 }
 
 type Client struct {
-	hub  *Hub
-	conn *websocket.Conn
-	send chan []byte
+	hub     *Hub
+	conn    *websocket.Conn
+	send    chan []byte
+	groupID int64
+	userID  int64
 }
 
 type Hub struct {
@@ -116,7 +128,6 @@ func NewHub() *Hub {
 	}
 }
 
-// WebSocketのメッセージを仲介する｡muxを使っても実装できるが変数をロックすると効率が落ちるためgorutineを使う
 func (h *Hub) Run() {
 	for {
 		select {
@@ -156,7 +167,10 @@ func (c *Client) readExecution() {
 			break
 		}
 
-		slog.Info("Received message from client", "message", string(message))
+		slog.Info("Received message from client",
+			"message", string(message),
+			"group_id", c.groupID,
+			"user_id", c.userID)
 
 		c.hub.broadcast <- message
 	}
@@ -170,7 +184,6 @@ func (c *Client) writeExecution() {
 	for {
 		message, ok := <-c.send
 		if !ok {
-			// チャネルが閉じられた場合、WebSocket接続を閉じる
 			c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 			return
 		}

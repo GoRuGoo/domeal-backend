@@ -69,10 +69,7 @@ func (r *Router) SetupRouter() http.Handler {
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.ConfirmUploadAndStartOCRHandler)),
 	)
 
-	hub := controller.NewHub()
-	go hub.Run()
-
-	roleController := controller.NewRoleController(repo, hub)
+	roleController := controller.NewRoleController(repo)
 
 	mux.Handle(
 		"/ws/role-division",
