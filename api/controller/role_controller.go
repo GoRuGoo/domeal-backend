@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"domeal/middleware"
 	"domeal/model"
 	"encoding/json"
@@ -117,6 +118,7 @@ func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.R
 		groupID:    groupID,
 		userID:     userID,
 		controller: c, // RoleControllerへの参照を追加
+		context:    r.Context(),
 	}
 	client.hub.register <- client
 
@@ -130,6 +132,7 @@ type Client struct {
 	send       chan []byte
 	groupID    int64
 	userID     int64
+	context    context.Context
 	controller *RoleController // RoleControllerへの参照を追加
 }
 
@@ -199,39 +202,45 @@ func (c *Client) readExecution() {
 			continue
 		}
 
-		// Redisに操作を書き込み
 		switch actionMsg.Action {
 		case "assign":
 			if actionMsg.Role == "" {
 				slog.Error("Role is required for assign action")
 				continue
 			}
-			err = c.controller.redisRepo.AssignRole(c.groupID, actionMsg.UserID, actionMsg.Role)
-			if err != nil {
-				slog.Error("Failed to assign role", "error", err, "group_id", c.groupID, "user_id", actionMsg.UserID, "role", actionMsg.Role)
-				continue
-			}
-			slog.Info("Role assigned successfully", "group_id", c.groupID, "user_id", actionMsg.UserID, "role", actionMsg.Role)
 
-		case "change":
-			if actionMsg.Role == "" {
-				slog.Error("Role is required for change action")
-				continue
-			}
-			err = c.controller.redisRepo.ChangeRole(c.groupID, actionMsg.UserID, actionMsg.Role)
+			// RedisでUpsert処理
+			err = c.controller.redisRepo.UpsertUserRole(c.context, c.groupID, actionMsg.UserID, actionMsg.Role)
 			if err != nil {
-				slog.Error("Failed to change role", "error", err, "group_id", c.groupID, "user_id", actionMsg.UserID, "role", actionMsg.Role)
+				slog.Error("Failed to assign or change role",
+					"error", err,
+					"group_id", c.groupID,
+					"user_id", actionMsg.UserID,
+					"role", actionMsg.Role,
+				)
 				continue
 			}
-			slog.Info("Role changed successfully", "group_id", c.groupID, "user_id", actionMsg.UserID, "role", actionMsg.Role)
+
+			slog.Info("Role upserted successfully",
+				"group_id", c.groupID,
+				"user_id", actionMsg.UserID,
+				"role", actionMsg.Role,
+			)
+
+			// 成功レスポンスを返す
+
+			//c.broadcastCurrentState()
+
+			slog.Info("kitayo")
+			c.hub.broadcast <- []byte(`{"type":"ack","message":"Role assigned/changed successfully"}`)
+			slog.Info("owattayo")
 
 		case "get_state":
-			// 状態取得のみ、Redis書き込みなし
 			slog.Info("Getting current state", "group_id", c.groupID)
+			c.broadcastCurrentState()
 
 		default:
 			slog.Error("Unknown action", "action", actionMsg.Action)
-			continue
 		}
 
 		// 現在の状態を取得してブロードキャスト
@@ -268,6 +277,8 @@ func (c *Client) broadcastCurrentState() {
 		slog.Error("Failed to marshal state message", "error", err)
 		return
 	}
+
+	slog.Info(string(stateBytes))
 
 	// 同じグループの全クライアントにブロードキャスト
 	c.hub.broadcast <- stateBytes

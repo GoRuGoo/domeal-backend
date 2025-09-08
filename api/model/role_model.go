@@ -25,25 +25,46 @@ func NewRedisRepository(rdb *redis.Client) *RedisRepository {
 type RoleRedisInterface interface {
 	AssignRole(groupID int64, userID int64, role string) error
 	ChangeRole(groupID int64, userID int64, newRole string) error
+	UpsertUserRole(ctx context.Context, groupID, userID int64, newRole string) error
 	GetAllCurrentRoles(groupID int64) (map[int64]string, error)
 }
 
-// ユーザーを役割に追加
-func (repo *RedisRepository) AssignRole(ctx context.Context, groupID int64, userID int64, role string) error {
-	key := fmt.Sprintf("group:%d:role:%s", groupID, role)
-	return repo.rdb.SAdd(ctx, key, userID).Err()
-}
-
-// ユーザーの役割変更
-func (repo *RedisRepository) ChangeRole(ctx context.Context, groupID int64, newRole string, userID int64) error {
+func (repo *RedisRepository) UpsertUserRole(ctx context.Context, groupID, userID int64, newRole string) error {
 	roles := []string{"shopping", "cooking", "cleaning"}
-	pipe := repo.rdb.TxPipeline()
+
+	// ユーザーが現在どの役割に属しているか確認
+	var currentRole string
 	for _, role := range roles {
-		pipe.SRem(ctx, fmt.Sprintf("group:%d:role:%s", groupID, role), userID)
+		key := fmt.Sprintf("group:%d:role:%s", groupID, role)
+		isMember, err := repo.rdb.SIsMember(ctx, key, userID).Result()
+		if err != nil {
+			return fmt.Errorf("failed to check membership: %w", err)
+		}
+		if isMember {
+			currentRole = role
+			break
+		}
 	}
-	pipe.SAdd(ctx, fmt.Sprintf("group:%d:role:%s", groupID, newRole), userID)
+
+	// トランザクション開始
+	pipe := repo.rdb.TxPipeline()
+
+	// もし現在の役割があれば削除
+	if currentRole != "" && currentRole != newRole {
+		oldKey := fmt.Sprintf("group:%d:role:%s", groupID, currentRole)
+		pipe.SRem(ctx, oldKey, userID)
+	}
+
+	// 新しい役割に追加
+	newKey := fmt.Sprintf("group:%d:role:%s", groupID, newRole)
+	pipe.SAdd(ctx, newKey, userID)
+
 	_, err := pipe.Exec(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to update role: %w", err)
+	}
+
+	return nil
 }
 
 // 現在の役割分担を取得
