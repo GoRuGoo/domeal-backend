@@ -3,12 +3,29 @@ package controller
 import (
 	"domeal/middleware"
 	"domeal/model"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/gorilla/websocket"
 )
+
+// TODO 一部密結合なため時間があったら治す
+
+// WebSocketメッセージの構造体
+type RoleActionMessage struct {
+	Action string `json:"action"` // "assign", "change", "get_state"
+	UserID int64  `json:"user_id"`
+	Role   string `json:"role,omitempty"` // "shopping", "cooking", "cleaning"
+}
+
+// ブロードキャスト用の状態メッセージ
+type RoleStateMessage struct {
+	Type    string              `json:"type"` // "role_update"
+	Roles   map[string][]string `json:"roles"`
+	GroupID int64               `json:"group_id"`
+}
 
 type RoleController struct {
 	upgrader  websocket.Upgrader
@@ -94,11 +111,12 @@ func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.R
 	hub := c.getOrCreateGroupHub(groupID)
 
 	client := &Client{
-		hub:     hub,
-		conn:    conn,
-		send:    make(chan []byte, 256),
-		groupID: groupID,
-		userID:  userID,
+		hub:        hub,
+		conn:       conn,
+		send:       make(chan []byte, 256),
+		groupID:    groupID,
+		userID:     userID,
+		controller: c, // RoleControllerへの参照を追加
 	}
 	client.hub.register <- client
 
@@ -107,11 +125,12 @@ func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.R
 }
 
 type Client struct {
-	hub     *Hub
-	conn    *websocket.Conn
-	send    chan []byte
-	groupID int64
-	userID  int64
+	hub        *Hub
+	conn       *websocket.Conn
+	send       chan []byte
+	groupID    int64
+	userID     int64
+	controller *RoleController // RoleControllerへの参照を追加
 }
 
 type Hub struct {
@@ -165,7 +184,6 @@ func (c *Client) readExecution() {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				slog.Error("予期しないWebSocketのクローズエラーが発生した｡正常ではないのでコネクションまわりの設定などを確認すべき｡", "error", err.Error())
 			}
-			//このあとdefer呼ばれる
 			break
 		}
 
@@ -174,8 +192,86 @@ func (c *Client) readExecution() {
 			"group_id", c.groupID,
 			"user_id", c.userID)
 
-		c.hub.broadcast <- message
+		// メッセージを解析してRedis操作を実行
+		var actionMsg RoleActionMessage
+		if err := json.Unmarshal(message, &actionMsg); err != nil {
+			slog.Error("Failed to parse message JSON", "error", err, "message", string(message))
+			continue
+		}
+
+		// Redisに操作を書き込み
+		switch actionMsg.Action {
+		case "assign":
+			if actionMsg.Role == "" {
+				slog.Error("Role is required for assign action")
+				continue
+			}
+			err = c.controller.redisRepo.AssignRole(c.groupID, actionMsg.UserID, actionMsg.Role)
+			if err != nil {
+				slog.Error("Failed to assign role", "error", err, "group_id", c.groupID, "user_id", actionMsg.UserID, "role", actionMsg.Role)
+				continue
+			}
+			slog.Info("Role assigned successfully", "group_id", c.groupID, "user_id", actionMsg.UserID, "role", actionMsg.Role)
+
+		case "change":
+			if actionMsg.Role == "" {
+				slog.Error("Role is required for change action")
+				continue
+			}
+			err = c.controller.redisRepo.ChangeRole(c.groupID, actionMsg.UserID, actionMsg.Role)
+			if err != nil {
+				slog.Error("Failed to change role", "error", err, "group_id", c.groupID, "user_id", actionMsg.UserID, "role", actionMsg.Role)
+				continue
+			}
+			slog.Info("Role changed successfully", "group_id", c.groupID, "user_id", actionMsg.UserID, "role", actionMsg.Role)
+
+		case "get_state":
+			// 状態取得のみ、Redis書き込みなし
+			slog.Info("Getting current state", "group_id", c.groupID)
+
+		default:
+			slog.Error("Unknown action", "action", actionMsg.Action)
+			continue
+		}
+
+		// 現在の状態を取得してブロードキャスト
+		c.broadcastCurrentState()
 	}
+}
+
+// 現在の役割状態を全クライアントにブロードキャスト
+func (c *Client) broadcastCurrentState() {
+	// GetAllCurrentRolesメソッドを使用する（実装がない場合は別の方法を考える）
+	roles, err := c.controller.redisRepo.GetAllCurrentRoles(c.groupID)
+	if err != nil {
+		slog.Error("Failed to get current roles", "error", err, "group_id", c.groupID)
+		return
+	}
+
+	// map[int64]string を map[string][]string に変換
+	rolesByName := make(map[string][]string)
+	for userID, role := range roles {
+		if rolesByName[role] == nil {
+			rolesByName[role] = make([]string, 0)
+		}
+		rolesByName[role] = append(rolesByName[role], strconv.FormatInt(userID, 10))
+	}
+
+	stateMsg := RoleStateMessage{
+		Type:    "role_update",
+		Roles:   rolesByName,
+		GroupID: c.groupID,
+	}
+
+	stateBytes, err := json.Marshal(stateMsg)
+	if err != nil {
+		slog.Error("Failed to marshal state message", "error", err)
+		return
+	}
+
+	// 同じグループの全クライアントにブロードキャスト
+	c.hub.broadcast <- stateBytes
+	slog.Info("Broadcasted role state to all clients", "group_id", c.groupID, "roles", rolesByName)
 }
 
 func (c *Client) writeExecution() {
