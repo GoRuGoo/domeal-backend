@@ -13,6 +13,11 @@ type RoleInterface interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
+type RoleRedisInterface interface {
+	UpsertUserRole(ctx context.Context, groupID, userID int64, newRole, iconURL string) error
+	GetAllCurrentRoles(ctx context.Context, groupID int64) (map[string][]RoleMember, error)
+}
+
 type RedisRepository struct {
 	rdb *redis.Client
 }
@@ -21,11 +26,6 @@ func NewRedisRepository(rdb *redis.Client) *RedisRepository {
 	return &RedisRepository{
 		rdb: rdb,
 	}
-}
-
-type RoleRedisInterface interface {
-	UpsertUserRole(ctx context.Context, groupID, userID int64, newRole, iconURL string) error
-	GetAllCurrentRoles(ctx context.Context, groupID int64) (map[string][]RoleMember, error)
 }
 
 type RoleMember struct {
