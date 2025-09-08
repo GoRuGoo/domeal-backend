@@ -24,9 +24,9 @@ type RoleActionMessage struct {
 
 // ブロードキャスト用の状態メッセージ
 type RoleStateMessage struct {
-	Type    string              `json:"type"` // "role_update"
-	Roles   map[string][]string `json:"roles"`
-	GroupID int64               `json:"group_id"`
+	Type    string                        `json:"type"` // "role_update"
+	Roles   map[string][]model.RoleMember `json:"roles"`
+	GroupID int64                         `json:"group_id"`
 }
 
 type RoleController struct {
@@ -118,6 +118,7 @@ func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.R
 		send:       make(chan []byte, 256),
 		groupID:    groupID,
 		userID:     userID,
+		userIcon:   tmpUser.PictureURL,
 		controller: c,                    // RoleControllerへの参照を追加
 		context:    context.Background(), // HTTPリクエストのcontextではなく、独立したcontextを使用
 	}
@@ -133,6 +134,7 @@ type Client struct {
 	send       chan []byte
 	groupID    int64
 	userID     int64
+	userIcon   string
 	context    context.Context
 	controller *RoleController // RoleControllerへの参照を追加
 }
@@ -223,13 +225,14 @@ func (c *Client) readExecution() {
 			defer cancel()
 
 			// RedisでUpsert処理
-			err = c.controller.redisRepo.UpsertUserRole(ctx, c.groupID, c.userID, actionMsg.Role)
+			err = c.controller.redisRepo.UpsertUserRole(ctx, c.groupID, c.userID, actionMsg.Role, c.userIcon)
 			if err != nil {
 				slog.Error("Failed to assign or change role",
 					"error", err,
 					"group_id", c.groupID,
 					"user_id", c.userID,
 					"role", actionMsg.Role,
+					"icon_url", c.userIcon,
 				)
 				// エラーレスポンスを返す
 				c.hub.broadcast <- []byte(`{"type":"error","message":"Failed to assign role"}`)
@@ -265,7 +268,7 @@ func (c *Client) broadcastCurrentState() {
 
 	stateMsg := RoleStateMessage{
 		Type:    "role_update",
-		Roles:   roles, // 既にmap[string][]string形式なのでそのまま使用
+		Roles:   roles, // 既にmap[string][]model.RoleMember形式なのでそのまま使用
 		GroupID: c.groupID,
 	}
 
