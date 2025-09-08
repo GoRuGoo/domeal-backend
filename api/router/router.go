@@ -59,7 +59,7 @@ func (r *Router) SetupRouter() http.Handler {
 	mux.Handle("/api/groups",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(groupController.GetGroupsHandler)),
 	)
-	mux.Handle("/api/issue-signed-receipt",
+	mux.Handle("/api/issue-signed-url",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.IssueSignedS3URLHandler)),
 	)
 	mux.Handle("/api/confirm-upload-and-start-ocr",
