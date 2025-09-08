@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -181,11 +182,19 @@ func (c *Client) readExecution() {
 		c.conn.Close()
 	}()
 
+	// 接続が60秒間無通信なら切断する
+	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.conn.SetPongHandler(func(appData string) error {
+		// pongを受け取ったら60秒延長
+		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				slog.Error("予期しないWebSocketのクローズエラーが発生した｡正常ではないのでコネクションまわりの設定などを確認すべき｡", "error", err.Error())
+				slog.Error("予期しないWebSocketのクローズエラーが発生した｡", "error", err.Error())
 			}
 			break
 		}
@@ -228,12 +237,7 @@ func (c *Client) readExecution() {
 			)
 
 			// 成功レスポンスを返す
-
-			//c.broadcastCurrentState()
-
-			slog.Info("kitayo")
 			c.hub.broadcast <- []byte(`{"type":"ack","message":"Role assigned/changed successfully"}`)
-			slog.Info("owattayo")
 
 		case "get_state":
 			slog.Info("Getting current state", "group_id", c.groupID)
@@ -286,28 +290,44 @@ func (c *Client) broadcastCurrentState() {
 }
 
 func (c *Client) writeExecution() {
+	pingTicker := time.NewTicker(30 * time.Second) // 30秒おきにPing送信
 	defer func() {
+		pingTicker.Stop()
 		c.conn.Close()
 	}()
 
 	for {
-		message, ok := <-c.send
-		if !ok {
-			c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-			return
-		}
+		select {
+		case message, ok := <-c.send:
+			if !ok {
+				// チャネルが閉じられたらWebSocketをクローズ
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
 
-		w, err := c.conn.NextWriter(websocket.TextMessage)
-		if err != nil {
-			slog.Error("Failed to get next writer", "error", err)
-			return
-		}
+			// クライアントにメッセージを送信
+			w, err := c.conn.NextWriter(websocket.TextMessage)
+			if err != nil {
+				slog.Error("Failed to get next writer", "error", err)
+				return
+			}
 
-		w.Write(message)
+			if _, err := w.Write(message); err != nil {
+				slog.Error("Failed to write message", "error", err)
+				return
+			}
 
-		if err := w.Close(); err != nil {
-			slog.Error("Failed to close writer", "error", err)
-			return
+			if err := w.Close(); err != nil {
+				slog.Error("Failed to close writer", "error", err)
+				return
+			}
+
+		case <-pingTicker.C:
+			// 定期的にPingを送信
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				slog.Error("Failed to send ping", "error", err)
+				return
+			}
 		}
 	}
 }

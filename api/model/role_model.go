@@ -23,8 +23,6 @@ func NewRedisRepository(rdb *redis.Client) *RedisRepository {
 }
 
 type RoleRedisInterface interface {
-	AssignRole(groupID int64, userID int64, role string) error
-	ChangeRole(groupID int64, userID int64, newRole string) error
 	UpsertUserRole(ctx context.Context, groupID, userID int64, newRole string) error
 	GetAllCurrentRoles(groupID int64) (map[int64]string, error)
 }
