@@ -5,6 +5,7 @@ import (
 	"domeal/controller"
 	"domeal/middleware"
 	"domeal/model"
+	"log/slog"
 	"net/http"
 )
 
@@ -39,6 +40,14 @@ func withCORS(handler http.Handler) http.Handler {
 
 func (r *Router) SetupRouter() http.Handler {
 	repo := model.NewRepository(r.db)
+	tmpRdb, err := model.InitRedis()
+	rdb := model.NewRedisRepository(tmpRdb)
+	if err != nil {
+		slog.Error("Failed to connect to Redis", "error", err)
+		return withCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "Failed to connect to Redis", http.StatusInternalServerError)
+		}))
+	}
 	userController := controller.NewUserController(repo)
 	groupController := controller.NewGroupController(repo)
 	receiptController := controller.NewReceiptController(repo)
@@ -69,7 +78,7 @@ func (r *Router) SetupRouter() http.Handler {
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.ConfirmUploadAndStartOCRHandler)),
 	)
 
-	roleController := controller.NewRoleController(repo)
+	roleController := controller.NewRoleController(repo, rdb)
 
 	mux.Handle(
 		"/ws/role-division",
