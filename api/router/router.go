@@ -42,7 +42,6 @@ func (r *Router) SetupRouter() http.Handler {
 	userController := controller.NewUserController(repo)
 	groupController := controller.NewGroupController(repo)
 	receiptController := controller.NewReceiptController(repo)
-	roleController := controller.NewRoleController(repo)
 
 	// TODO: Redisの設定が必要
 	// roleController := controller.NewRoleController(repo, redisRepo)
@@ -69,6 +68,11 @@ func (r *Router) SetupRouter() http.Handler {
 	mux.Handle("/api/confirm-upload-and-start-ocr",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.ConfirmUploadAndStartOCRHandler)),
 	)
+
+	hub := controller.NewHub()
+	go hub.Run()
+
+	roleController := controller.NewRoleController(repo, hub)
 
 	http.Handle(
 		"/ws/role-division",

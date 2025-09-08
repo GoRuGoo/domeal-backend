@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"sync"
 
 	"github.com/gorilla/websocket"
 )
@@ -15,12 +14,14 @@ import (
 type RoleController struct {
 	upgrader  websocket.Upgrader
 	groupRepo model.GroupInterface
+	hub       *Hub
 }
 
 // コンストラクタ
-func NewRoleController(groupRepo model.GroupInterface) *RoleController {
+func NewRoleController(groupRepo model.GroupInterface, hub *Hub) *RoleController {
 	return &RoleController{
 		groupRepo: groupRepo,
+		hub:       hub,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				// 開発環境では全てのオリジンを許可
@@ -30,12 +31,6 @@ func NewRoleController(groupRepo model.GroupInterface) *RoleController {
 		},
 	}
 }
-
-// groupConnections: グループごとの接続管理
-var (
-	groupConnections = make(map[int64][]*websocket.Conn)
-	mu               sync.Mutex
-)
 
 // RoleDivisionController はWebSocket接続を受け付けるハンドラ
 func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.Request) {
@@ -91,74 +86,106 @@ func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// 接続を groupConnections に登録
-	mu.Lock()
-	groupConnections[groupID] = append(groupConnections[groupID], conn)
-	slog.Info("Connection added",
-		"group_id", groupID,
-		"user_id", userID,
-		"total_connections", len(groupConnections[groupID]))
-	mu.Unlock()
+	// Hubの構造体に接続を追加しておく
+	client := &Client{hub: c.hub, conn: conn, send: make(chan []byte, 256)}
+	client.hub.register <- client
 
-	// deferを利用して確実に切断処理を行う
-	defer func() {
-		conn.Close()
-
-		mu.Lock()
-		conns := groupConnections[groupID]
-		for i, c := range conns {
-			if c == conn {
-				groupConnections[groupID] = append(conns[:i], conns[i+1:]...)
-				break
-			}
-		}
-		slog.Info("Connection removed",
-			"group_id", groupID,
-			"user_id", userID,
-			"remaining_connections", len(groupConnections[groupID]))
-		mu.Unlock()
-	}()
-
-	// メッセージの受信とブロードキャスト
-	c.handleMessages(conn, groupID, userID)
+	go client.readExecution()
+	go client.writeExecution()
 }
 
-// handleMessages はWebSocketからのメッセージを受信して同じグループ内にブロードキャストする
-func (c *RoleController) handleMessages(conn *websocket.Conn, groupID, userID int64) {
+type Client struct {
+	hub  *Hub
+	conn *websocket.Conn
+	send chan []byte
+}
+
+type Hub struct {
+	clients    map[*Client]bool
+	broadcast  chan []byte
+	register   chan *Client
+	unregister chan *Client
+}
+
+func NewHub() *Hub {
+	return &Hub{
+		clients:    make(map[*Client]bool),
+		broadcast:  make(chan []byte),
+		register:   make(chan *Client),
+		unregister: make(chan *Client),
+	}
+}
+
+// WebSocketのメッセージを仲介する｡muxを使っても実装できるが変数をロックすると効率が落ちるためgorutineを使う
+func (h *Hub) Run() {
 	for {
-		// メッセージを受信
-		_, message, err := conn.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err,
-				websocket.CloseGoingAway,
-				websocket.CloseAbnormalClosure) {
-				slog.Error("WebSocket unexpected close error",
-					"group_id", groupID,
-					"user_id", userID,
-					"error", err)
-			} else {
-				slog.Info("WebSocket connection closed normally",
-					"group_id", groupID,
-					"user_id", userID)
+		select {
+		case client := <-h.register:
+			h.clients[client] = true
+		case client := <-h.unregister:
+			if _, ok := h.clients[client]; ok {
+				delete(h.clients, client)
+				close(client.send)
 			}
+		case message := <-h.broadcast:
+			for client := range h.clients {
+				select {
+				case client.send <- message:
+				default:
+					close(client.send)
+					delete(h.clients, client)
+				}
+			}
+		}
+	}
+}
+
+func (c *Client) readExecution() {
+	defer func() {
+		c.hub.unregister <- c
+		c.conn.Close()
+	}()
+
+	for {
+		_, message, err := c.conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				slog.Error("予期しないWebSocketのクローズエラーが発生した｡正常ではないのでコネクションまわりの設定などを確認すべき｡", "error", err.Error())
+			}
+			//このあとdefer呼ばれる
 			break
 		}
 
-		slog.Info("Received WebSocket message",
-			"group_id", groupID,
-			"user_id", userID,
-			"message", string(message))
+		slog.Info("Received message from client", "message", string(message))
 
-		// 同じグループの全接続にメッセージを送信
-		mu.Lock()
-		for _, c := range groupConnections[groupID] {
-			if err := c.WriteMessage(websocket.TextMessage, message); err != nil {
-				slog.Error("Failed to send message to client",
-					"group_id", groupID,
-					"user_id", userID,
-					"error", err)
-			}
+		c.hub.broadcast <- message
+	}
+}
+
+func (c *Client) writeExecution() {
+	defer func() {
+		c.conn.Close()
+	}()
+
+	for {
+		message, ok := <-c.send
+		if !ok {
+			// チャネルが閉じられた場合、WebSocket接続を閉じる
+			c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+			return
 		}
-		mu.Unlock()
+
+		w, err := c.conn.NextWriter(websocket.TextMessage)
+		if err != nil {
+			slog.Error("Failed to get next writer", "error", err)
+			return
+		}
+
+		w.Write(message)
+
+		if err := w.Close(); err != nil {
+			slog.Error("Failed to close writer", "error", err)
+			return
+		}
 	}
 }
