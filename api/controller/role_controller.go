@@ -33,13 +33,15 @@ type RoleController struct {
 	upgrader  websocket.Upgrader
 	groupRepo model.GroupInterface
 	redisRepo model.RoleRedisInterface
+	roleRepo  model.RoleInterface
 	groupHubs map[int64]*Hub // group別にHubを持つ
 }
 
-func NewRoleController(groupRepo model.GroupInterface, redisRepo model.RoleRedisInterface) *RoleController {
+func NewRoleController(groupRepo model.GroupInterface, redisRepo model.RoleRedisInterface, roleRepo model.RoleInterface) *RoleController {
 	return &RoleController{
 		groupRepo: groupRepo,
 		redisRepo: redisRepo,
+		roleRepo:  roleRepo,
 		groupHubs: make(map[int64]*Hub),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
