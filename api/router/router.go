@@ -74,7 +74,7 @@ func (r *Router) SetupRouter() http.Handler {
 
 	roleController := controller.NewRoleController(repo, hub)
 
-	http.Handle(
+	mux.Handle(
 		"/ws/role-division",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(roleController.RoleDivisionController)),
 	)
