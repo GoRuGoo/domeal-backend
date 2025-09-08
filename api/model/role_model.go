@@ -24,7 +24,7 @@ func NewRedisRepository(rdb *redis.Client) *RedisRepository {
 
 type RoleRedisInterface interface {
 	UpsertUserRole(ctx context.Context, groupID, userID int64, newRole string) error
-	GetAllCurrentRoles(groupID int64) (map[int64]string, error)
+	GetAllCurrentRoles(ctx context.Context, groupID int64) (map[string][]string, error)
 }
 
 func (repo *RedisRepository) UpsertUserRole(ctx context.Context, groupID, userID int64, newRole string) error {
@@ -66,7 +66,7 @@ func (repo *RedisRepository) UpsertUserRole(ctx context.Context, groupID, userID
 }
 
 // 現在の役割分担を取得
-func (repo *RedisRepository) GetGroupRoles(ctx context.Context, groupID int64) (map[string][]string, error) {
+func (repo *RedisRepository) GetAllCurrentRoles(ctx context.Context, groupID int64) (map[string][]string, error) {
 	roles := []string{"shopping", "cooking", "cleaning"}
 	result := make(map[string][]string)
 	for _, role := range roles {

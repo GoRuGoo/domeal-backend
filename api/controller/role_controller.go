@@ -118,8 +118,8 @@ func (c *RoleController) RoleDivisionController(w http.ResponseWriter, r *http.R
 		send:       make(chan []byte, 256),
 		groupID:    groupID,
 		userID:     userID,
-		controller: c, // RoleControllerへの参照を追加
-		context:    r.Context(),
+		controller: c,                    // RoleControllerへの参照を追加
+		context:    context.Background(), // HTTPリクエストのcontextではなく、独立したcontextを使用
 	}
 	client.hub.register <- client
 
@@ -218,26 +218,32 @@ func (c *Client) readExecution() {
 				continue
 			}
 
+			// タイムアウト付きのcontextを作成
+			ctx, cancel := context.WithTimeout(c.context, 5*time.Second)
+			defer cancel()
+
 			// RedisでUpsert処理
-			err = c.controller.redisRepo.UpsertUserRole(c.context, c.groupID, actionMsg.UserID, actionMsg.Role)
+			err = c.controller.redisRepo.UpsertUserRole(ctx, c.groupID, c.userID, actionMsg.Role)
 			if err != nil {
 				slog.Error("Failed to assign or change role",
 					"error", err,
 					"group_id", c.groupID,
-					"user_id", actionMsg.UserID,
+					"user_id", c.userID,
 					"role", actionMsg.Role,
 				)
+				// エラーレスポンスを返す
+				c.hub.broadcast <- []byte(`{"type":"error","message":"Failed to assign role"}`)
 				continue
 			}
 
 			slog.Info("Role upserted successfully",
 				"group_id", c.groupID,
-				"user_id", actionMsg.UserID,
+				"user_id", c.userID,
 				"role", actionMsg.Role,
 			)
 
-			// 成功レスポンスを返す
-			c.hub.broadcast <- []byte(`{"type":"ack","message":"Role assigned/changed successfully"}`)
+			// Redisに変更があったので現在の状態をブロードキャスト
+			c.broadcastCurrentState()
 
 		case "get_state":
 			slog.Info("Getting current state", "group_id", c.groupID)
@@ -246,33 +252,20 @@ func (c *Client) readExecution() {
 		default:
 			slog.Error("Unknown action", "action", actionMsg.Action)
 		}
-
-		// 現在の状態を取得してブロードキャスト
-		c.broadcastCurrentState()
 	}
 }
 
 // 現在の役割状態を全クライアントにブロードキャスト
 func (c *Client) broadcastCurrentState() {
-	// GetAllCurrentRolesメソッドを使用する（実装がない場合は別の方法を考える）
-	roles, err := c.controller.redisRepo.GetAllCurrentRoles(c.groupID)
+	roles, err := c.controller.redisRepo.GetAllCurrentRoles(c.context, c.groupID)
 	if err != nil {
 		slog.Error("Failed to get current roles", "error", err, "group_id", c.groupID)
 		return
 	}
 
-	// map[int64]string を map[string][]string に変換
-	rolesByName := make(map[string][]string)
-	for userID, role := range roles {
-		if rolesByName[role] == nil {
-			rolesByName[role] = make([]string, 0)
-		}
-		rolesByName[role] = append(rolesByName[role], strconv.FormatInt(userID, 10))
-	}
-
 	stateMsg := RoleStateMessage{
 		Type:    "role_update",
-		Roles:   rolesByName,
+		Roles:   roles, // 既にmap[string][]string形式なのでそのまま使用
 		GroupID: c.groupID,
 	}
 
@@ -286,7 +279,7 @@ func (c *Client) broadcastCurrentState() {
 
 	// 同じグループの全クライアントにブロードキャスト
 	c.hub.broadcast <- stateBytes
-	slog.Info("Broadcasted role state to all clients", "group_id", c.groupID, "roles", rolesByName)
+	slog.Info("Broadcasted role state to all clients", "group_id", c.groupID, "roles", roles)
 }
 
 func (c *Client) writeExecution() {
