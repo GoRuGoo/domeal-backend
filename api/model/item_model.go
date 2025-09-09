@@ -12,8 +12,8 @@ import (
 
 type ItemRedisInterface interface {
 	InsertItemByGroupID(ctx context.Context, groupID int64, item PurchaseItem) error
-	ChoiseItemByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID int64, iconURL string) error
-	RemoveItemChoiceByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID int64, iconURL string) error
+	ChoiseItemByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID, itemID int64, iconURL string) error
+	RemoveItemChoiceByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID, itemID int64, iconURL string) error
 	GetAllItemSelections(ctx context.Context, groupID int64) (map[string][]map[string]string, error)
 }
 
@@ -43,8 +43,9 @@ func (r *RedisItemRepository) InsertItemByGroupID(ctx context.Context, groupID i
 	return nil
 }
 
-func (r *RedisItemRepository) ChoiseItemByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID int64, iconURL string) error {
-	key := fmt.Sprintf("items:%d:%d", groupID, receiptID)
+func (r *RedisItemRepository) ChoiseItemByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID, itemID int64, iconURL string) error {
+	slog.Info("Choosing item")
+	key := fmt.Sprintf("items:%d:%d", groupID, itemID)
 
 	// ユーザー情報をJSON化
 	userInfo := struct {
@@ -70,8 +71,8 @@ func (r *RedisItemRepository) ChoiseItemByReceiptIDAndUserData(ctx context.Conte
 	return nil
 }
 
-func (r *RedisItemRepository) RemoveItemChoiceByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID int64, iconURL string) error {
-	key := fmt.Sprintf("items:%d:%d", groupID, receiptID)
+func (r *RedisItemRepository) RemoveItemChoiceByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID, itemID int64, iconURL string) error {
+	key := fmt.Sprintf("items:%d:%d", groupID, itemID)
 
 	// 削除対象のユーザー情報をJSON化
 	userInfo := struct {

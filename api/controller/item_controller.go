@@ -212,7 +212,7 @@ func (c *ItemClient) readItemExecution() {
 			defer cancel()
 
 			err = c.controller.redisRepo.ChoiseItemByReceiptIDAndUserData(
-				ctx, c.groupID, itemActionMsg.ReceiptID, c.userID, c.userIcon)
+				ctx, c.groupID, itemActionMsg.ReceiptID, c.userID, itemActionMsg.ItemID, c.userIcon)
 			if err != nil {
 				slog.Error("Failed to choose item",
 					"error", err,
@@ -239,7 +239,7 @@ func (c *ItemClient) readItemExecution() {
 			defer cancel()
 
 			err = c.controller.redisRepo.RemoveItemChoiceByReceiptIDAndUserData(
-				ctx, c.groupID, itemActionMsg.ReceiptID, c.userID, c.userIcon)
+				ctx, c.groupID, itemActionMsg.ReceiptID, c.userID, itemActionMsg.ItemID, c.userIcon)
 			if err != nil {
 				slog.Error("Failed to remove item choice",
 					"error", err,
