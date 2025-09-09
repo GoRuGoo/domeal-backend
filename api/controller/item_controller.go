@@ -95,8 +95,10 @@ func (c *ItemController) SelectItemController(w http.ResponseWriter, r *http.Req
 		context:    context.Background(),
 	}
 
+	client.hub.register <- client
+
 	go client.readItemExecution()
-	go client.writeItemExecution()
+	go client.writeExecution()
 }
 
 type ItemClient struct {
@@ -160,8 +162,9 @@ func (c *ItemController) getOrCreateItemHub(groupID int64) *ItemHub {
 }
 
 type ItemActionMessage struct {
-	Action string `json:"action"`
-	ItemID int64  `json:"item_id"`
+	Action    string `json:"action"` // "choose", "remove", "get_items"
+	ItemID    int64  `json:"item_id"`
+	ReceiptID int64  `json:"receipt_id"`
 }
 
 func (c *ItemClient) readItemExecution() {
@@ -199,12 +202,69 @@ func (c *ItemClient) readItemExecution() {
 		}
 
 		switch itemActionMsg.Action {
-		case "choice":
+		case "choose":
+			if itemActionMsg.ReceiptID == 0 {
+				slog.Error("ReceiptID is required for choose action")
+				continue
+			}
 
+			ctx, cancel := context.WithTimeout(c.context, 5*time.Second)
+			defer cancel()
 
+			err = c.controller.redisRepo.ChoiseItemByReceiptIDAndUserData(
+				ctx, c.groupID, itemActionMsg.ReceiptID, c.userID, c.userIcon)
+			if err != nil {
+				slog.Error("Failed to choose item",
+					"error", err,
+					"group_id", c.groupID,
+					"receipt_id", itemActionMsg.ReceiptID,
+					"user_id", c.userID)
+				continue
+			}
 
+			slog.Info("Item chosen successfully",
+				"group_id", c.groupID,
+				"receipt_id", itemActionMsg.ReceiptID,
+				"user_id", c.userID)
+
+			c.broadcastCurrentItemSelections()
+
+		case "remove":
+			if itemActionMsg.ReceiptID == 0 {
+				slog.Error("ReceiptID is required for remove action")
+				continue
+			}
+
+			ctx, cancel := context.WithTimeout(c.context, 5*time.Second)
+			defer cancel()
+
+			err = c.controller.redisRepo.RemoveItemChoiceByReceiptIDAndUserData(
+				ctx, c.groupID, itemActionMsg.ReceiptID, c.userID, c.userIcon)
+			if err != nil {
+				slog.Error("Failed to remove item choice",
+					"error", err,
+					"group_id", c.groupID,
+					"receipt_id", itemActionMsg.ReceiptID,
+					"user_id", c.userID)
+				continue
+			}
+
+			slog.Info("Item choice removed successfully",
+				"group_id", c.groupID,
+				"receipt_id", itemActionMsg.ReceiptID,
+				"user_id", c.userID)
+
+			c.broadcastCurrentItemSelections()
+
+		case "get_items":
+			// アイテム一覧をブロードキャスト（必要に応じて実装）
+			slog.Info("Get items request received", "group_id", c.groupID)
+			c.broadcastCurrentItemSelections()
+
+		default:
+			slog.Error("Unknown action", "action", itemActionMsg.Action)
+		}
 	}
-
 }
 func (c *ItemClient) writeExecution() {
 	pingTicker := time.NewTicker(30 * time.Second) // 30秒おきにPing送信
@@ -247,4 +307,37 @@ func (c *ItemClient) writeExecution() {
 			}
 		}
 	}
+}
+
+type ItemSelectionMessage struct {
+	Type    string                         `json:"type"`     // "item_selection_update"
+	GroupID int64                          `json:"group_id"` // グループID
+	Items   map[string][]map[string]string `json:"items"`    // itemID -> []{user_id, icon_url}
+}
+
+func (c *ItemClient) broadcastCurrentItemSelections() {
+	// まず Redis から商品情報一覧を取得
+	itemsMap, err := c.controller.redisRepo.GetAllItemSelections(c.context, c.groupID)
+	if err != nil {
+		slog.Error("Failed to get current item selections", "error", err, "group_id", c.groupID)
+		return
+	}
+
+	msg := ItemSelectionMessage{
+		Type:    "item_selection_update",
+		GroupID: c.groupID,
+		Items:   itemsMap,
+	}
+
+	stateBytes, err := json.Marshal(msg)
+	if err != nil {
+		slog.Error("Failed to marshal item selection message", "error", err)
+		return
+	}
+
+	slog.Info(string(stateBytes))
+
+	// Hub にブロードキャスト
+	c.hub.broadcast <- stateBytes
+	slog.Info("Broadcasted current item selections to all clients", "group_id", c.groupID)
 }

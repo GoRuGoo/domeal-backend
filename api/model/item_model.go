@@ -14,6 +14,7 @@ type ItemRedisInterface interface {
 	InsertItemByGroupID(ctx context.Context, groupID int64, item PurchaseItem) error
 	ChoiseItemByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID int64, iconURL string) error
 	RemoveItemChoiceByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID int64, iconURL string) error
+	GetAllItemSelections(ctx context.Context, groupID int64) (map[string][]map[string]string, error)
 }
 
 type RedisItemRepository struct {
@@ -94,6 +95,41 @@ func (r *RedisItemRepository) RemoveItemChoiceByReceiptIDAndUserData(ctx context
 	}
 
 	return nil
+}
+
+func (r *RedisItemRepository) GetAllItemSelections(ctx context.Context, groupID int64) (map[string][]map[string]string, error) {
+	result := make(map[string][]map[string]string)
+
+	// まず groupID の商品一覧を取得
+	itemInfoKey := fmt.Sprintf("items:%d:itemInfo", groupID)
+	itemMap, err := r.rdb.HGetAll(ctx, itemInfoKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get item info: %w", err)
+	}
+
+	for itemID := range itemMap {
+		// 商品ごとの Set を取得
+		key := fmt.Sprintf("items:%d:%s", groupID, itemID)
+		usersJSON, err := r.rdb.SMembers(ctx, key).Result()
+		if err != nil {
+			slog.Error("failed to get user selections for item", "error", err, "key", key)
+			continue
+		}
+
+		var users []map[string]string
+		for _, u := range usersJSON {
+			var user map[string]string
+			if err := json.Unmarshal([]byte(u), &user); err != nil {
+				slog.Error("failed to unmarshal user json", "error", err, "json", u)
+				continue
+			}
+			users = append(users, user)
+		}
+
+		result[itemID] = users
+	}
+
+	return result, nil
 }
 
 type ItemInterface interface {
