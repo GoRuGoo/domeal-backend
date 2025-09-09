@@ -10,11 +10,19 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+type ItemWithUsers struct {
+	ID            int64               `json:"id"`
+	Name          string              `json:"name"`
+	Price         float64             `json:"price"`
+	Quantity      int                 `json:"quantity"`
+	SelectedUsers []map[string]string `json:"selected_users"`
+}
+
 type ItemRedisInterface interface {
 	InsertItemByGroupID(ctx context.Context, groupID int64, item PurchaseItem) error
 	ChoiseItemByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID, itemID int64, iconURL string) error
 	RemoveItemChoiceByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID, itemID int64, iconURL string) error
-	GetAllItemSelections(ctx context.Context, groupID int64) (map[string][]map[string]string, error)
+	GetAllItemSelections(ctx context.Context, groupID int64) ([]ItemWithUsers, error)
 }
 
 type RedisItemRepository struct {
@@ -98,44 +106,49 @@ func (r *RedisItemRepository) RemoveItemChoiceByReceiptIDAndUserData(ctx context
 	return nil
 }
 
-func (r *RedisItemRepository) GetAllItemSelections(ctx context.Context, groupID int64) (map[string][]map[string]string, error) {
-	result := make(map[string][]map[string]string)
+func (r *RedisItemRepository) GetAllItemSelections(ctx context.Context, groupID int64) ([]ItemWithUsers, error) {
+	var result []ItemWithUsers
 
-	// groupID の商品一覧を取得
 	itemInfoKey := fmt.Sprintf("items:%d:itemInfo", groupID)
 	itemMap, err := r.rdb.HGetAll(ctx, itemInfoKey).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get item info: %w", err)
 	}
 
-	for itemID := range itemMap {
-		// 商品ごとの Set を取得
-		key := fmt.Sprintf("items:%d:%s", groupID, itemID)
-		usersJSON, err := r.rdb.SMembers(ctx, key).Result()
-		if err != nil {
-			slog.Error("failed to get user selections for item", "error", err, "key", key)
+	for _, itemJSON := range itemMap {
+		var item PurchaseItem
+		if err := json.Unmarshal([]byte(itemJSON), &item); err != nil {
+			slog.Error("failed to unmarshal item info", "error", err, "json", itemJSON)
 			continue
 		}
 
-		var users []map[string]string
+		key := fmt.Sprintf("items:%d:%d", groupID, item.ID)
+		usersJSON, err := r.rdb.SMembers(ctx, key).Result()
+		if err != nil {
+			slog.Error("failed to get user selections for item", "error", err, "key", key)
+		}
+
+		users := make([]map[string]string, 0)
 		for _, u := range usersJSON {
-			// 数値を含む可能性があるので、まず map[string]interface{} で受ける
 			var raw map[string]interface{}
 			if err := json.Unmarshal([]byte(u), &raw); err != nil {
 				slog.Error("failed to unmarshal user json", "error", err, "json", u)
 				continue
 			}
-
-			// すべて string に変換
 			converted := make(map[string]string)
 			for k, v := range raw {
 				converted[k] = fmt.Sprint(v)
 			}
-
 			users = append(users, converted)
 		}
 
-		result[itemID] = users
+		result = append(result, ItemWithUsers{
+			ID:            item.ID,
+			Name:          item.ItemName,
+			Price:         item.Price,
+			Quantity:      item.Quantity,
+			SelectedUsers: users,
+		})
 	}
 
 	return result, nil

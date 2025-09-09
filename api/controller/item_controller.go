@@ -310,14 +310,14 @@ func (c *ItemClient) writeExecution() {
 }
 
 type ItemSelectionMessage struct {
-	Type    string                         `json:"type"`     // "item_selection_update"
-	GroupID int64                          `json:"group_id"` // グループID
-	Items   map[string][]map[string]string `json:"items"`    // itemID -> []{user_id, icon_url}
+	Type    string                `json:"type"`     // "item_selection_update"
+	GroupID int64                 `json:"group_id"` // グループID
+	Items   []model.ItemWithUsers `json:"items"`    // 商品情報と選択ユーザー情報
 }
 
 func (c *ItemClient) broadcastCurrentItemSelections() {
-	// まず Redis から商品情報一覧を取得
-	itemsMap, err := c.controller.redisRepo.GetAllItemSelections(c.context, c.groupID)
+	// Redis から商品情報と選択情報を一緒に取得
+	items, err := c.controller.redisRepo.GetAllItemSelections(c.context, c.groupID)
 	if err != nil {
 		slog.Error("Failed to get current item selections", "error", err, "group_id", c.groupID)
 		return
@@ -326,7 +326,7 @@ func (c *ItemClient) broadcastCurrentItemSelections() {
 	msg := ItemSelectionMessage{
 		Type:    "item_selection_update",
 		GroupID: c.groupID,
-		Items:   itemsMap,
+		Items:   items,
 	}
 
 	stateBytes, err := json.Marshal(msg)
