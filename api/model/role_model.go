@@ -67,8 +67,10 @@ type RoleMember struct {
 func (repo *RedisRepository) UpsertUserRole(ctx context.Context, groupID, userID int64, newRole, iconURL string) error {
 	roles := []string{"shopping", "cooking", "cleaning"}
 
-	// ユーザーが現在どの役割に属しているか確認
 	var currentRole string
+	var currentMemberJSON string
+
+	// 1. 現在の役割を特定（完全一致するJSONも取得）
 	for _, role := range roles {
 		key := fmt.Sprintf("group:%d:role:%s", groupID, role)
 		members, err := repo.rdb.SMembers(ctx, key).Result()
@@ -78,8 +80,12 @@ func (repo *RedisRepository) UpsertUserRole(ctx context.Context, groupID, userID
 
 		for _, m := range members {
 			var rm RoleMember
-			if json.Unmarshal([]byte(m), &rm) == nil && rm.UserID == userID {
+			if err := json.Unmarshal([]byte(m), &rm); err != nil {
+				continue // JSON不正ならスキップ
+			}
+			if rm.UserID == userID {
 				currentRole = role
+				currentMemberJSON = m // 完全一致するJSONを保持
 				break
 			}
 		}
@@ -88,24 +94,25 @@ func (repo *RedisRepository) UpsertUserRole(ctx context.Context, groupID, userID
 		}
 	}
 
-	// トランザクション開始
+	// 2. トランザクション開始
 	pipe := repo.rdb.TxPipeline()
 
-	// もし現在の役割があれば削除
+	// 3. 古い役割があり、かつ新しい役割と異なる場合は削除
 	if currentRole != "" && currentRole != newRole {
 		oldKey := fmt.Sprintf("group:%d:role:%s", groupID, currentRole)
-		// 古いJSONを削除
-		oldValue, _ := json.Marshal(RoleMember{UserID: userID})
-		pipe.SRem(ctx, oldKey, oldValue)
+		pipe.SRem(ctx, oldKey, currentMemberJSON)
 	}
 
-	// 新しい役割に追加
+	// 4. 新しい役割を追加
 	newKey := fmt.Sprintf("group:%d:role:%s", groupID, newRole)
-	newValue, _ := json.Marshal(RoleMember{UserID: userID, IconURL: iconURL})
+	newValue, err := json.Marshal(RoleMember{UserID: userID, IconURL: iconURL})
+	if err != nil {
+		return fmt.Errorf("failed to marshal new role: %w", err)
+	}
 	pipe.SAdd(ctx, newKey, newValue)
 
-	_, err := pipe.Exec(ctx)
-	if err != nil {
+	// 5. コマンド実行
+	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("failed to update role: %w", err)
 	}
 
