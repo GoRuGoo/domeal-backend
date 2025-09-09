@@ -101,7 +101,7 @@ func (r *RedisItemRepository) RemoveItemChoiceByReceiptIDAndUserData(ctx context
 func (r *RedisItemRepository) GetAllItemSelections(ctx context.Context, groupID int64) (map[string][]map[string]string, error) {
 	result := make(map[string][]map[string]string)
 
-	// まず groupID の商品一覧を取得
+	// groupID の商品一覧を取得
 	itemInfoKey := fmt.Sprintf("items:%d:itemInfo", groupID)
 	itemMap, err := r.rdb.HGetAll(ctx, itemInfoKey).Result()
 	if err != nil {
@@ -119,12 +119,20 @@ func (r *RedisItemRepository) GetAllItemSelections(ctx context.Context, groupID 
 
 		var users []map[string]string
 		for _, u := range usersJSON {
-			var user map[string]string
-			if err := json.Unmarshal([]byte(u), &user); err != nil {
+			// 数値を含む可能性があるので、まず map[string]interface{} で受ける
+			var raw map[string]interface{}
+			if err := json.Unmarshal([]byte(u), &raw); err != nil {
 				slog.Error("failed to unmarshal user json", "error", err, "json", u)
 				continue
 			}
-			users = append(users, user)
+
+			// すべて string に変換
+			converted := make(map[string]string)
+			for k, v := range raw {
+				converted[k] = fmt.Sprint(v)
+			}
+
+			users = append(users, converted)
 		}
 
 		result[itemID] = users
