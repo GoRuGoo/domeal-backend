@@ -12,6 +12,8 @@ import (
 
 type ItemRedisInterface interface {
 	InsertItemByGroupID(ctx context.Context, groupID int64, item PurchaseItem) error
+	ChoiseItemByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID int64, iconURL string) error
+	RemoveItemChoiceByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID int64, iconURL string) error
 }
 
 type RedisItemRepository struct {
@@ -35,6 +37,60 @@ func (r *RedisItemRepository) InsertItemByGroupID(ctx context.Context, groupID i
 	if err != nil {
 		slog.Error("failed to insert item into redis", "error", err, "key", key, "item", item)
 		return fmt.Errorf("failed to insert item into redis: %w", err)
+	}
+
+	return nil
+}
+
+func (r *RedisItemRepository) ChoiseItemByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID int64, iconURL string) error {
+	key := fmt.Sprintf("items:%d:%d", groupID, receiptID)
+
+	// ユーザー情報をJSON化
+	userInfo := struct {
+		UserID  int64  `json:"user_id"`
+		IconURL string `json:"icon_url"`
+	}{
+		UserID:  userID,
+		IconURL: iconURL,
+	}
+
+	data, err := json.Marshal(userInfo)
+	if err != nil {
+		slog.Error("failed to marshal user info", "error", err, "userInfo", userInfo)
+		return fmt.Errorf("failed to marshal user info: %w", err)
+	}
+
+	// Setに追加（重複は無視される）
+	if err := r.rdb.SAdd(ctx, key, data).Err(); err != nil {
+		slog.Error("failed to add user info to redis set", "error", err, "key", key, "userInfo", userInfo)
+		return fmt.Errorf("failed to add user info to redis set: %w", err)
+	}
+
+	return nil
+}
+
+func (r *RedisItemRepository) RemoveItemChoiceByReceiptIDAndUserData(ctx context.Context, groupID, receiptID, userID int64, iconURL string) error {
+	key := fmt.Sprintf("items:%d:%d", groupID, receiptID)
+
+	// 削除対象のユーザー情報をJSON化
+	userInfo := struct {
+		UserID  int64  `json:"user_id"`
+		IconURL string `json:"icon_url"`
+	}{
+		UserID:  userID,
+		IconURL: iconURL,
+	}
+
+	data, err := json.Marshal(userInfo)
+	if err != nil {
+		slog.Error("failed to marshal user info for removal", "error", err, "userInfo", userInfo)
+		return fmt.Errorf("failed to marshal user info for removal: %w", err)
+	}
+
+	// Setから削除
+	if err := r.rdb.SRem(ctx, key, data).Err(); err != nil {
+		slog.Error("failed to remove user info from redis set", "error", err, "key", key, "userInfo", userInfo)
+		return fmt.Errorf("failed to remove user info from redis set: %w", err)
 	}
 
 	return nil
