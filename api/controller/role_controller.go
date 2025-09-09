@@ -17,7 +17,7 @@ import (
 
 // WebSocketメッセージの構造体
 type RoleActionMessage struct {
-	Action string `json:"action"` // "assign", "change", "get_state"
+	Action string `json:"action"` // "assign", "change", "get_state", "complete"
 	UserID int64  `json:"user_id"`
 	Role   string `json:"role,omitempty"` // "shopping", "cooking", "cleaning"
 }
@@ -142,18 +142,20 @@ type Client struct {
 }
 
 type Hub struct {
-	clients    map[*Client]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
+	clients        map[*Client]bool
+	broadcast      chan []byte
+	register       chan *Client
+	unregister     chan *Client
+	completedUsers map[int64]bool // 完了通知を送ったユーザーを追跡
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		clients:        make(map[*Client]bool),
+		broadcast:      make(chan []byte),
+		register:       make(chan *Client),
+		unregister:     make(chan *Client),
+		completedUsers: make(map[int64]bool),
 	}
 }
 
@@ -254,6 +256,18 @@ func (c *Client) readExecution() {
 			slog.Info("Getting current state", "group_id", c.groupID)
 			c.broadcastCurrentState()
 
+		case "complete":
+			slog.Info("User completed role assignment", "group_id", c.groupID, "user_id", c.userID)
+
+			// 完了したユーザーをマーク
+			c.hub.completedUsers[c.userID] = true
+
+			// 全ユーザーが完了したかチェック
+			if c.isAllUsersCompleted() {
+				slog.Info("All users completed role assignment, persisting to DB", "group_id", c.groupID)
+				c.persistRolesToDB()
+			}
+
 		default:
 			slog.Error("Unknown action", "action", actionMsg.Action)
 		}
@@ -328,4 +342,75 @@ func (c *Client) writeExecution() {
 			}
 		}
 	}
+}
+
+// 全ユーザーが完了したかチェック
+func (c *Client) isAllUsersCompleted() bool {
+	// グループの全メンバー数を取得
+	membersCount, err := c.controller.groupRepo.GetGroupMembersCount(c.groupID)
+	if err != nil {
+		slog.Error("Failed to get group members", "error", err, "group_id", c.groupID)
+		return false
+	}
+
+	// 完了したユーザー数と全メンバー数を比較
+	completedCount := len(c.hub.completedUsers)
+
+	slog.Info("Checking completion status",
+		"group_id", c.groupID,
+		"completed", completedCount,
+		"total", membersCount)
+
+	return completedCount >= membersCount
+}
+
+// RedisからDBに役割分担を永続化
+func (c *Client) persistRolesToDB() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Redisから現在の役割分担を取得
+	roles, err := c.controller.redisRepo.GetAllCurrentRoles(ctx, c.groupID)
+	if err != nil {
+		slog.Error("Failed to get roles from Redis", "error", err, "group_id", c.groupID)
+		return
+	}
+
+	// DBに永続化
+	for roleName, members := range roles {
+		for _, member := range members {
+			err := c.controller.roleRepo.CreateRole(ctx, c.groupID, member.UserID, roleName)
+			if err != nil {
+				slog.Error("Failed to persist role to DB",
+					"error", err,
+					"group_id", c.groupID,
+					"user_id", member.UserID,
+					"role", roleName)
+				continue
+			}
+			slog.Info("Role persisted to DB",
+				"group_id", c.groupID,
+				"user_id", member.UserID,
+				"role", roleName)
+		}
+	}
+
+	// 完了状態をリセット（次回の役割分担のため）
+	c.hub.completedUsers = make(map[int64]bool)
+
+	// 永続化完了をクライアントに通知
+	completionMsg := map[string]interface{}{
+		"type":     "roles_persisted",
+		"group_id": c.groupID,
+		"message":  "役割分担がデータベースに保存されました",
+	}
+
+	msgBytes, err := json.Marshal(completionMsg)
+	if err != nil {
+		slog.Error("Failed to marshal completion message", "error", err)
+		return
+	}
+
+	c.hub.broadcast <- msgBytes
+	slog.Info("Notified all clients about role persistence", "group_id", c.groupID)
 }

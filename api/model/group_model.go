@@ -10,6 +10,7 @@ type GroupInterface interface {
 	AddGroupMember(tx *sql.Tx, groupID, userID int64, isOwner bool) error
 	GetGroup(groupID int64) (*Group, error)
 	IsGroupMember(groupID, userID int64) (bool, error)
+	GetGroupMembersCount(groupID int64) (int, error)
 	GetAllGroups() ([]*Group, error)
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
@@ -253,4 +254,22 @@ func (repo *Repository) getGroupMembers(groupID int64) ([]*GroupMember, error) {
 	}
 
 	return members, nil
+}
+
+func (repo *Repository) GetGroupMembersCount(groupID int64) (int, error) {
+	query := `
+	SELECT
+		COUNT(*)
+	FROM
+		group_members
+	WHERE
+		group_id = $1`
+
+	var count int
+	err := repo.db.QueryRow(query, groupID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+
+	return count, nil
 }
