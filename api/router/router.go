@@ -41,6 +41,7 @@ func withCORS(handler http.Handler) http.Handler {
 func (r *Router) SetupRouter() http.Handler {
 	repo := model.NewRepository(r.db)
 	tmpRdb, err := model.InitRedis()
+	itemRDB := model.NewRedisItemRepository(tmpRdb)
 	rdb := model.NewRedisRepository(tmpRdb)
 	if err != nil {
 		slog.Error("Failed to connect to Redis", "error", err)
@@ -50,7 +51,7 @@ func (r *Router) SetupRouter() http.Handler {
 	}
 	userController := controller.NewUserController(repo)
 	groupController := controller.NewGroupController(repo)
-	receiptController := controller.NewReceiptController(repo)
+	receiptController := controller.NewReceiptController(repo, repo, itemRDB)
 
 	// TODO: Redisの設定が必要
 	// roleController := controller.NewRoleController(repo, redisRepo)

@@ -22,12 +22,16 @@ import (
 )
 
 type ReceiptController struct {
-	repo model.ReceiptInterface
+	repo     model.ReceiptInterface
+	itemRepo model.ItemInterface
+	rdb      model.ItemRedisInterface
 }
 
-func NewReceiptController(repo model.ReceiptInterface) *ReceiptController {
+func NewReceiptController(repo model.ReceiptInterface, itemRepo model.ItemInterface, rdb model.ItemRedisInterface) *ReceiptController {
 	return &ReceiptController{
-		repo: repo,
+		repo:     repo,
+		itemRepo: itemRepo,
+		rdb:      rdb,
 	}
 }
 
@@ -300,6 +304,13 @@ func (c *ReceiptController) ConfirmUploadAndStartOCRHandler(w http.ResponseWrite
 		return
 	}
 
+	err = c.saveItemToRedis(req.ReceiptID, receipt.GroupID)
+	if err != nil {
+		slog.Error("Failed to save items to Redis", "error", err, "receipt_id", req.ReceiptID, "group_id", receipt.GroupID)
+		http.Error(w, "Failed to save items to Redis", http.StatusInternalServerError)
+		return
+	}
+
 	// レスポンスを作成
 	response := ConfirmUploadResponse{
 		Message:   "Receipt upload confirmed successfully",
@@ -425,5 +436,21 @@ func (c *ReceiptController) saveOCRResultToDB(tx *sql.Tx, receiptID, groupID int
 		"group_id", groupID,
 		"items_count", len(purchaseItems))
 
+	return nil
+}
+
+func (c *ReceiptController) saveItemToRedis(receiptID, groupID int64) error {
+	allPurchaseItems, err := c.itemRepo.GetAllItemsDataByReceiptID(receiptID)
+	if err != nil {
+		return fmt.Errorf("failed to get all items data by receiptID: %w", err)
+	}
+
+	for _, item := range allPurchaseItems {
+		err := c.rdb.InsertItemByGroupID(context.Background(), groupID, item)
+		if err != nil {
+			slog.Error("Failed to insert item into Redis", "error", err, "group_id", groupID, "item", item)
+			return fmt.Errorf("failed to insert item into Redis: %w", err)
+		}
+	}
 	return nil
 }
