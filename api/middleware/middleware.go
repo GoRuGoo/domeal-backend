@@ -19,6 +19,7 @@ type User struct {
 	ID          int
 	DisplayName string
 	LineSub     string
+	PictureURL  string
 }
 
 // 認証ミドルウェア
@@ -41,14 +42,14 @@ func AuthMiddleware(db *sql.DB) func(http.Handler) http.Handler {
 			var lastUsedAt time.Time
 			err = db.QueryRow(`
                 SELECT
-					u.id, u.display_name, u.line_sub, s.last_used_at
+					u.id, u.display_name, u.line_sub, s.last_used_at, u.picture_url
                 FROM
 					sessions s
                 JOIN
 					users u ON s.user_id = u.id
                 WHERE
 					s.session_token = $1
-            `, sessionToken).Scan(&user.ID, &user.DisplayName, &user.LineSub, &lastUsedAt)
+            `, sessionToken).Scan(&user.ID, &user.DisplayName, &user.LineSub, &lastUsedAt, &user.PictureURL)
 
 			if err == sql.ErrNoRows {
 				http.Error(w, "Unauthorized: invalid session", http.StatusUnauthorized)

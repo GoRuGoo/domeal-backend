@@ -30,5 +30,6 @@ func main() {
 	defer conn.Close()
 
 	router := router.NewRouter(conn)
+	slog.Info("Starting server on :8080")
 	http.ListenAndServe(":8080", router.SetupRouter())
 }

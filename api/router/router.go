@@ -5,6 +5,7 @@ import (
 	"domeal/controller"
 	"domeal/middleware"
 	"domeal/model"
+	"log/slog"
 	"net/http"
 )
 
@@ -39,9 +40,20 @@ func withCORS(handler http.Handler) http.Handler {
 
 func (r *Router) SetupRouter() http.Handler {
 	repo := model.NewRepository(r.db)
+	tmpRdb, err := model.InitRedis()
+	rdb := model.NewRedisRepository(tmpRdb)
+	if err != nil {
+		slog.Error("Failed to connect to Redis", "error", err)
+		return withCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "Failed to connect to Redis", http.StatusInternalServerError)
+		}))
+	}
 	userController := controller.NewUserController(repo)
 	groupController := controller.NewGroupController(repo)
 	receiptController := controller.NewReceiptController(repo)
+
+	// TODO: Redisの設定が必要
+	// roleController := controller.NewRoleController(repo, redisRepo)
 
 	mux := http.NewServeMux()
 
@@ -64,6 +76,13 @@ func (r *Router) SetupRouter() http.Handler {
 	)
 	mux.Handle("/api/confirm-upload-and-start-ocr",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.ConfirmUploadAndStartOCRHandler)),
+	)
+
+	roleController := controller.NewRoleController(repo, rdb, repo)
+
+	mux.Handle(
+		"/ws/role-division",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(roleController.RoleDivisionController)),
 	)
 
 	// CORS設定で最外層をラップ
