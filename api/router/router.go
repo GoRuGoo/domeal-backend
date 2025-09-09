@@ -41,6 +41,7 @@ func withCORS(handler http.Handler) http.Handler {
 func (r *Router) SetupRouter() http.Handler {
 	repo := model.NewRepository(r.db)
 	tmpRdb, err := model.InitRedis()
+	itemRDB := model.NewRedisItemRepository(tmpRdb)
 	rdb := model.NewRedisRepository(tmpRdb)
 	if err != nil {
 		slog.Error("Failed to connect to Redis", "error", err)
@@ -50,7 +51,9 @@ func (r *Router) SetupRouter() http.Handler {
 	}
 	userController := controller.NewUserController(repo)
 	groupController := controller.NewGroupController(repo)
-	receiptController := controller.NewReceiptController(repo)
+	receiptController := controller.NewReceiptController(repo, repo, itemRDB)
+
+	itemController := controller.NewItemController(itemRDB, repo)
 
 	// TODO: Redisの設定が必要
 	// roleController := controller.NewRoleController(repo, redisRepo)
@@ -83,6 +86,11 @@ func (r *Router) SetupRouter() http.Handler {
 	mux.Handle(
 		"/ws/role-division",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(roleController.RoleDivisionController)),
+	)
+
+	mux.Handle(
+		"/ws/select-item",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(itemController.SelectItemController)),
 	)
 
 	// CORS設定で最外層をラップ
