@@ -55,6 +55,9 @@ func (r *Router) SetupRouter() http.Handler {
 
 	itemController := controller.NewItemController(itemRDB, repo)
 
+	flowRDB := model.NewFlowRedisRepository(tmpRdb)
+	flowController := controller.NewFlowController(flowRDB)
+
 	// TODO: Redisの設定が必要
 	// roleController := controller.NewRoleController(repo, redisRepo)
 
@@ -91,6 +94,14 @@ func (r *Router) SetupRouter() http.Handler {
 	mux.Handle(
 		"/ws/select-item",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(itemController.SelectItemController)),
+	)
+
+	mux.Handle("/api/subscribe-flow",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(flowController.SubscribeFlowHandler)),
+	)
+
+	mux.Handle("/api/publish-flow",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(flowController.PublishFlowUpdate)),
 	)
 
 	// CORS設定で最外層をラップ
