@@ -6,17 +6,21 @@ import (
 	"domeal/middleware"
 	"domeal/model"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 )
 
 type GroupController struct {
 	repo model.GroupInterface
+	r    model.FlowRedisInterface
 }
 
-func NewGroupController(repo model.GroupInterface) *GroupController {
+func NewGroupController(repo model.GroupInterface, r model.FlowRedisInterface) *GroupController {
 	return &GroupController{
 		repo: repo,
+		r:    r,
 	}
 }
 
@@ -123,6 +127,16 @@ func (c *GroupController) CreateGroupController(w http.ResponseWriter, r *http.R
 		http.Error(w, "Failed to commit transaction", http.StatusInternalServerError)
 		return
 	}
+
+	// Redisに初期メッセージを保存
+	lastMessageKey := fmt.Sprintf("last_message:group_flow:%d", groupID)
+	if err := c.r.Set(r.Context(), lastMessageKey, "start", 24*time.Hour); err != nil {
+		slog.Error("Failed to save last message", "error", err, "key", lastMessageKey)
+		http.Error(w, "failed to save last message", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("Group data initialized in Redis", "group_id", groupID)
 
 	// レスポンスを作成
 	response := CreateGroupResponse{

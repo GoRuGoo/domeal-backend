@@ -49,13 +49,13 @@ func (r *Router) SetupRouter() http.Handler {
 			http.Error(w, "Failed to connect to Redis", http.StatusInternalServerError)
 		}))
 	}
+	flowRDB := model.NewFlowRedisRepository(tmpRdb)
 	userController := controller.NewUserController(repo)
-	groupController := controller.NewGroupController(repo)
+	groupController := controller.NewGroupController(repo, flowRDB)
 	receiptController := controller.NewReceiptController(repo, repo, itemRDB)
 
 	itemController := controller.NewItemController(itemRDB, repo)
 
-	flowRDB := model.NewFlowRedisRepository(tmpRdb)
 	flowController := controller.NewFlowController(flowRDB)
 
 	// TODO: Redisの設定が必要
