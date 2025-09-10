@@ -52,7 +52,7 @@ func (r *Router) SetupRouter() http.Handler {
 	flowRDB := model.NewFlowRedisRepository(tmpRdb)
 	userController := controller.NewUserController(repo)
 	groupController := controller.NewGroupController(repo, flowRDB)
-	receiptController := controller.NewReceiptController(repo, repo, itemRDB)
+	receiptController := controller.NewReceiptController(repo, repo, flowRDB, itemRDB)
 
 	itemController := controller.NewItemController(itemRDB, repo)
 

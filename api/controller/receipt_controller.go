@@ -22,16 +22,18 @@ import (
 )
 
 type ReceiptController struct {
-	repo     model.ReceiptInterface
-	itemRepo model.ItemInterface
-	rdb      model.ItemRedisInterface
+	repo          model.ReceiptInterface
+	itemRepo      model.ItemInterface
+	flowRedisRepo model.FlowRedisInterface
+	rdb           model.ItemRedisInterface
 }
 
-func NewReceiptController(repo model.ReceiptInterface, itemRepo model.ItemInterface, rdb model.ItemRedisInterface) *ReceiptController {
+func NewReceiptController(repo model.ReceiptInterface, itemRepo model.ItemInterface, flowRedisRepo model.FlowRedisInterface, rdb model.ItemRedisInterface) *ReceiptController {
 	return &ReceiptController{
-		repo:     repo,
-		itemRepo: itemRepo,
-		rdb:      rdb,
+		repo:          repo,
+		itemRepo:      itemRepo,
+		flowRedisRepo: flowRedisRepo,
+		rdb:           rdb,
 	}
 }
 
@@ -303,6 +305,12 @@ func (c *ReceiptController) ConfirmUploadAndStartOCRHandler(w http.ResponseWrite
 		http.Error(w, "Failed to commit transaction", http.StatusInternalServerError)
 		return
 	}
+
+	//Redisに最新のフロー状態を保存
+	lastMessageKey := fmt.Sprintf("last_message:group_flow:%d", receipt.GroupID)
+	c.flowRedisRepo.Set(r.Context(), lastMessageKey, "move_to_choice_items", 24*time.Hour)
+	c.flowRedisRepo.Publish(r.Context(), fmt.Sprintf("group_flow:%d", receipt.GroupID), "move_to_choice_items")
+	slog.Info("hogehoighei")
 
 	err = c.saveItemToRedis(req.ReceiptID, receipt.GroupID)
 	if err != nil {
