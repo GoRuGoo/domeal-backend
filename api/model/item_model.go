@@ -122,6 +122,11 @@ func (r *RedisItemRepository) GetAllItemSelections(ctx context.Context, groupID 
 			continue
 		}
 
+		name := item.ItemName
+		if item.PredictItemName != "" {
+			name = item.PredictItemName
+		}
+
 		key := fmt.Sprintf("items:%d:%d", groupID, item.ID)
 		usersJSON, err := r.rdb.SMembers(ctx, key).Result()
 		if err != nil {
@@ -144,7 +149,7 @@ func (r *RedisItemRepository) GetAllItemSelections(ctx context.Context, groupID 
 
 		result = append(result, ItemWithUsers{
 			ID:            item.ID,
-			Name:          item.ItemName,
+			Name:          name,
 			Price:         item.Price,
 			Quantity:      item.Quantity,
 			SelectedUsers: users,
