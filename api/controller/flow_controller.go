@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 type FlowController struct {
@@ -44,6 +45,24 @@ func (c *FlowController) SubscribeFlowHandler(w http.ResponseWriter, r *http.Req
 
 	channelName := fmt.Sprintf("group_flow:%d", groupID)
 	slog.Info("Subscribing to channel", "channel", channelName)
+
+	// 最新メッセージを取得して送信
+	lastMessageKey := fmt.Sprintf("last_message:group_flow:%d", groupID)
+	lastMessage, err := c.rdb.Get(r.Context(), lastMessageKey)
+	if err == nil && lastMessage != "" {
+		fmt.Fprintf(w, "data: %s\n\n", lastMessage)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		slog.Info("Sent last message to new client", "channel", channelName, "message", lastMessage)
+	} else {
+		// 接続確立を示す初期メッセージを送信
+		fmt.Fprintf(w, "data: {\"type\":\"connected\",\"channel\":\"%s\"}\n\n", channelName)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		slog.Info("Sent initial connection message", "channel", channelName)
+	}
 
 	pubsub := c.rdb.Subscribe(r.Context(), channelName)
 	defer pubsub.Close()
@@ -91,6 +110,14 @@ func (c *FlowController) PublishFlowUpdate(w http.ResponseWriter, r *http.Reques
 
 	channelName := fmt.Sprintf("group_flow:%d", groupID)
 	slog.Info("Publishing message to channel", "channel", channelName, "message", message)
+
+	// 最新メッセージをRedisに保存 (24時間保持)
+	lastMessageKey := fmt.Sprintf("last_message:group_flow:%d", groupID)
+	if err := c.rdb.Set(r.Context(), lastMessageKey, message, 24*time.Hour); err != nil {
+		slog.Error("Failed to save last message", "error", err, "key", lastMessageKey)
+		http.Error(w, "failed to save last message", http.StatusInternalServerError)
+		return
+	}
 
 	err = c.rdb.Publish(r.Context(), channelName, message)
 	if err != nil {
