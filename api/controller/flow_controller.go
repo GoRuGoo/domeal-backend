@@ -36,19 +36,14 @@ func (c *FlowController) SubscribeFlowHandler(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Cache-Control")
 
 	// 即座にヘッダーを送信
 	w.WriteHeader(http.StatusOK)
 
 	channelName := fmt.Sprintf("group_flow:%d", groupID)
 	slog.Info("Subscribing to channel", "channel", channelName)
-
-	// 接続確立を示す初期メッセージを送信
-	fmt.Fprintf(w, "data: {\"type\":\"connected\",\"channel\":\"%s\"}\n\n", channelName)
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-	slog.Info("Sent initial connection message", "channel", channelName)
 
 	pubsub := c.rdb.Subscribe(r.Context(), channelName)
 	defer pubsub.Close()
