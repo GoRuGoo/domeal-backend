@@ -5,6 +5,7 @@ import (
 	"domeal/middleware"
 	"domeal/model"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -33,14 +34,16 @@ type RoleController struct {
 	upgrader  websocket.Upgrader
 	groupRepo model.GroupInterface
 	redisRepo model.RoleRedisInterface
+	flowRepo  model.FlowRedisInterface
 	roleRepo  model.RoleInterface
 	groupHubs map[int64]*Hub // group別にHubを持つ
 }
 
-func NewRoleController(groupRepo model.GroupInterface, redisRepo model.RoleRedisInterface, roleRepo model.RoleInterface) *RoleController {
+func NewRoleController(groupRepo model.GroupInterface, redisRepo model.RoleRedisInterface, flowRepo model.FlowRedisInterface, roleRepo model.RoleInterface) *RoleController {
 	return &RoleController{
 		groupRepo: groupRepo,
 		redisRepo: redisRepo,
+		flowRepo:  flowRepo,
 		roleRepo:  roleRepo,
 		groupHubs: make(map[int64]*Hub),
 		upgrader: websocket.Upgrader{
@@ -265,6 +268,11 @@ func (c *Client) readExecution() {
 			// 全ユーザーが完了したかチェック
 			if c.isAllUsersCompleted() {
 				slog.Info("All users completed role assignment, persisting to DB", "group_id", c.groupID)
+
+				//Redisに最新のフロー状態を保存
+				lastMessageKey := fmt.Sprintf("last_message:group_flow:%d", c.groupID)
+				c.controller.flowRepo.Set(c.context, lastMessageKey, "move_to_waiting_or_upload_receipt", 24*time.Hour)
+				c.controller.flowRepo.Publish(c.context, fmt.Sprintf("group_flow:%d", c.groupID), "move_to_waiting_or_upload_receipt")
 				c.persistRolesToDB()
 			}
 
