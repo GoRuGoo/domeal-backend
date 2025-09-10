@@ -113,18 +113,20 @@ type ItemClient struct {
 }
 
 type ItemHub struct {
-	clients    map[*ItemClient]bool
-	broadcast  chan []byte
-	register   chan *ItemClient
-	unregister chan *ItemClient
+	clients        map[*ItemClient]bool
+	broadcast      chan []byte
+	register       chan *ItemClient
+	unregister     chan *ItemClient
+	completedUsers map[int64]bool // 完了通知を送ったユーザーを追跡
 }
 
 func NewItemHub() *ItemHub {
 	return &ItemHub{
-		clients:    make(map[*ItemClient]bool),
-		broadcast:  make(chan []byte),
-		register:   make(chan *ItemClient),
-		unregister: make(chan *ItemClient),
+		clients:        make(map[*ItemClient]bool),
+		broadcast:      make(chan []byte),
+		register:       make(chan *ItemClient),
+		unregister:     make(chan *ItemClient),
+		completedUsers: make(map[int64]bool),
 	}
 }
 
@@ -162,7 +164,7 @@ func (c *ItemController) getOrCreateItemHub(groupID int64) *ItemHub {
 }
 
 type ItemActionMessage struct {
-	Action    string `json:"action"` // "choose", "remove", "get_items"
+	Action    string `json:"action"` // "choose", "remove", "get_items", "complete"
 	ItemID    int64  `json:"item_id"`
 	ReceiptID int64  `json:"receipt_id"`
 }
@@ -261,6 +263,18 @@ func (c *ItemClient) readItemExecution() {
 			slog.Info("Get items request received", "group_id", c.groupID)
 			c.broadcastCurrentItemSelections()
 
+		case "complete":
+			slog.Info("User completed item selection", "group_id", c.groupID, "user_id", c.userID)
+
+			// 完了したユーザーをマーク
+			c.hub.completedUsers[c.userID] = true
+
+			// 全ユーザーが完了したかチェック
+			if c.isAllUsersCompleted() {
+				slog.Info("All users completed item selection, persisting to DB", "group_id", c.groupID)
+				c.persistItemSelectionsToNotification()
+			}
+
 		default:
 			slog.Error("Unknown action", "action", itemActionMsg.Action)
 		}
@@ -340,4 +354,61 @@ func (c *ItemClient) broadcastCurrentItemSelections() {
 	// Hub にブロードキャスト
 	c.hub.broadcast <- stateBytes
 	slog.Info("Broadcasted current item selections to all clients", "group_id", c.groupID)
+}
+
+// 全ユーザーが完了したかチェック
+func (c *ItemClient) isAllUsersCompleted() bool {
+	// グループの全メンバー数を取得
+	membersCount, err := c.controller.groupRepo.GetGroupMembersCount(c.groupID)
+	if err != nil {
+		slog.Error("Failed to get group members", "error", err, "group_id", c.groupID)
+		return false
+	}
+
+	// 完了したユーザー数と全メンバー数を比較
+	completedCount := len(c.hub.completedUsers)
+
+	slog.Info("Checking completion status",
+		"group_id", c.groupID,
+		"completed", completedCount,
+		"total", membersCount)
+
+	return completedCount >= membersCount
+}
+
+// アイテム選択完了を通知
+func (c *ItemClient) persistItemSelectionsToNotification() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Redisから現在のアイテム選択情報を取得
+	items, err := c.controller.redisRepo.GetAllItemSelections(ctx, c.groupID)
+	if err != nil {
+		slog.Error("Failed to get item selections from Redis", "error", err, "group_id", c.groupID)
+		return
+	}
+
+	slog.Info("Item selections retrieved for notification",
+		"group_id", c.groupID,
+		"items_count", len(items))
+
+	// 完了状態をリセット（次回のアイテム選択のため）
+	c.hub.completedUsers = make(map[int64]bool)
+
+	// 完了通知をクライアントに送信
+	completionMsg := map[string]interface{}{
+		"type":     "items_selection_completed",
+		"group_id": c.groupID,
+		"message":  "アイテム選択が完了しました",
+		"items":    items,
+	}
+
+	msgBytes, err := json.Marshal(completionMsg)
+	if err != nil {
+		slog.Error("Failed to marshal completion message", "error", err)
+		return
+	}
+
+	c.hub.broadcast <- msgBytes
+	slog.Info("Notified all clients about item selection completion", "group_id", c.groupID)
 }
