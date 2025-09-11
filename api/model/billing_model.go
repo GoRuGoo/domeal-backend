@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 )
 
@@ -20,9 +21,16 @@ type UserBilling struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type UserBillSummary struct {
+	ID               int64  `json:"id"`                 // user_billsテーブルのid
+	TotalAmount      int64  `json:"total_amount"`       // 小数点切り上げ後の金額
+	PaypalMeUsername string `json:"paypal_me_username"` // 受取人のPayPal Me username
+}
+
 type BillingInterface interface {
 	StoreUserBilling(ctx context.Context, tx *sql.Tx, groupID, receiptID, userID, recipient int64, totalAmount float64) error
 	StoreUserBillings(ctx context.Context, tx *sql.Tx, groupID, receiptID, recipient int64, userBills map[int64]float64) error
+	GetUserBillByUserID(ctx context.Context, userID int64) ([]UserBillSummary, error)
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
@@ -74,4 +82,67 @@ func (repo *Repository) StoreUserBillings(ctx context.Context, tx *sql.Tx, group
 	)
 
 	return nil
+}
+
+// GetUserBillByUserID はユーザーIDでpendingステータスの請求書を取得し、小数点を切り上げして返す
+func (repo *Repository) GetUserBillByUserID(ctx context.Context, userID int64) ([]UserBillSummary, error) {
+	query := `
+		SELECT
+			ub.id, u.paypal_me_username, ub.total_amount
+		FROM
+			user_bills ub
+		JOIN
+			users u ON ub.recipient = u.id
+		WHERE
+			ub.user_id = $1
+		AND
+			ub.status = 'pending'
+		ORDER BY
+			ub.created_at DESC
+	`
+
+	rows, err := repo.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		slog.Error("Failed to query user bills",
+			"error", err,
+			"user_id", userID)
+		return nil, fmt.Errorf("failed to query user bills: %w", err)
+	}
+	defer rows.Close()
+
+	var bills []UserBillSummary
+	for rows.Next() {
+		var id int64
+		var paypalMeUsername string
+		var totalAmount float64
+
+		if err := rows.Scan(&id, &paypalMeUsername, &totalAmount); err != nil {
+			slog.Error("Failed to scan user bill row",
+				"error", err,
+				"user_id", userID)
+			return nil, fmt.Errorf("failed to scan user bill row: %w", err)
+		}
+
+		// 小数点以下は切り上げる
+		roundedAmount := int64(math.Ceil(totalAmount))
+
+		bills = append(bills, UserBillSummary{
+			ID:               id,
+			TotalAmount:      roundedAmount,
+			PaypalMeUsername: paypalMeUsername,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		slog.Error("Error iterating user bill rows",
+			"error", err,
+			"user_id", userID)
+		return nil, fmt.Errorf("error iterating user bill rows: %w", err)
+	}
+
+	slog.Info("Successfully retrieved user bills",
+		"user_id", userID,
+		"bill_count", len(bills))
+
+	return bills, nil
 }
