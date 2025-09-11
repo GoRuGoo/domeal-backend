@@ -183,6 +183,9 @@ func (c *ItemClient) readItemExecution() {
 		return nil
 	})
 
+	// 接続時に現在のアイテム選択状況をブロードキャスト
+	c.broadcastCurrentItemSelections()
+
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
