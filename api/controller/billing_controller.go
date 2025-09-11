@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 )
 
 type BillWithPayPalLink struct {
@@ -77,4 +78,56 @@ func (c *BillingController) GetUserBill(w http.ResponseWriter, r *http.Request) 
 	slog.Info("Successfully returned user bills with PayPal links",
 		"user_id", user.ID,
 		"bill_count", len(billsWithLinks))
+}
+
+func (c *BillingController) CompleteBill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		slog.Error("Invalid method", "method", r.Method)
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// URLパラメータからbill_idを取得
+	billIDStr := r.URL.Query().Get("bill_id")
+	if billIDStr == "" {
+		slog.Error("Missing bill_id parameter")
+		http.Error(w, "Missing bill_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	billID, err := strconv.ParseInt(billIDStr, 10, 64)
+	if err != nil {
+		slog.Error("Invalid bill_id parameter", "bill_id", billIDStr, "error", err)
+		http.Error(w, "Invalid bill_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	err = c.billingRepo.UpdateBillStatus(ctx, billID, "done")
+	if err != nil {
+		slog.Error("Failed to update bill status",
+			"error", err,
+			"bill_id", billID)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// 成功レスポンス
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Bill status updated to done",
+		"bill_id": billID,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode complete bill response",
+			"error", err,
+			"bill_id", billID)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("Successfully completed bill",
+		"bill_id", billID)
 }

@@ -31,6 +31,7 @@ type BillingInterface interface {
 	StoreUserBilling(ctx context.Context, tx *sql.Tx, groupID, receiptID, userID, recipient int64, totalAmount float64) error
 	StoreUserBillings(ctx context.Context, tx *sql.Tx, groupID, receiptID, recipient int64, userBills map[int64]float64) error
 	GetUserBillByUserID(ctx context.Context, userID int64) ([]UserBillSummary, error)
+	UpdateBillStatus(ctx context.Context, billID int64, status string) error
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
@@ -145,4 +146,42 @@ func (repo *Repository) GetUserBillByUserID(ctx context.Context, userID int64) (
 		"bill_count", len(bills))
 
 	return bills, nil
+}
+
+func (repo *Repository) UpdateBillStatus(ctx context.Context, billID int64, status string) error {
+	query := `
+		UPDATE user_bills
+		SET status = $2, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1
+	`
+
+	result, err := repo.db.ExecContext(ctx, query, billID, status)
+	if err != nil {
+		slog.Error("Failed to update bill status",
+			"error", err,
+			"bill_id", billID,
+			"status", status)
+		return fmt.Errorf("failed to update bill status: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		slog.Error("Failed to get rows affected",
+			"error", err,
+			"bill_id", billID)
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		slog.Warn("No bill found with the given ID",
+			"bill_id", billID)
+		return fmt.Errorf("no bill found with ID %d", billID)
+	}
+
+	slog.Info("Successfully updated bill status",
+		"bill_id", billID,
+		"status", status,
+		"rows_affected", rowsAffected)
+
+	return nil
 }

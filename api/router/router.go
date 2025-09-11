@@ -90,6 +90,10 @@ func (r *Router) SetupRouter() http.Handler {
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(billingController.GetUserBill)),
 	)
 
+	mux.Handle("/api/complete-bill",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(billingController.CompleteBill)),
+	)
+
 	roleController := controller.NewRoleController(repo, rdb, flowRDB, repo)
 
 	mux.Handle(
