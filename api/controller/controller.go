@@ -253,7 +253,7 @@ func (c *UserController) CheckLoginStatusHandler(w http.ResponseWriter, r *http.
 			Message:    "Not logged in",
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(response)
 		return
 	}
