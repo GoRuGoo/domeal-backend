@@ -14,6 +14,7 @@ type ReceiptInterface interface {
 	IsUserInGroup(groupID, userID int64) (bool, error)
 	GetReceiptObjectKeyByGroupID(groupID int64) (string, error)
 	SavePurchaseItems(tx *sql.Tx, receiptID, groupID int64, items []PurchaseItem) error
+	GetReceiptIDAndUploaderIDByGroupID(groupID int64) (int64, int64, error)
 	UpdateReceiptOCRStatus(tx *sql.Tx, receiptID int64, status string) error
 }
 
@@ -216,4 +217,30 @@ func (repo *Repository) UpdateReceiptOCRStatus(tx *sql.Tx, receiptID int64, stat
 
 	_, err = stmt.Exec(status, receiptID)
 	return err
+}
+
+func (repo *Repository) GetReceiptIDAndUploaderIDByGroupID(groupID int64) (int64, int64, error) {
+	query := `
+		SELECT
+			id, uploaded_by
+		FROM
+			receipts
+		WHERE
+			group_id = $1
+		LIMIT 1
+	`
+
+	var receiptID int64
+	var uploadedBy int64
+
+	err := repo.db.QueryRow(query, groupID).Scan(&receiptID, &uploadedBy)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// レシートが存在しない場合は0を返す
+			return 0, 0, nil
+		}
+		return 0, 0, err
+	}
+
+	return receiptID, uploadedBy, nil
 }

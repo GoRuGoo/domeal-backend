@@ -54,7 +54,7 @@ func (r *Router) SetupRouter() http.Handler {
 	groupController := controller.NewGroupController(repo, flowRDB)
 	receiptController := controller.NewReceiptController(repo, repo, flowRDB, itemRDB)
 
-	itemController := controller.NewItemController(itemRDB, repo)
+	itemController := controller.NewItemController(itemRDB, repo, repo, repo)
 
 	flowController := controller.NewFlowController(flowRDB)
 

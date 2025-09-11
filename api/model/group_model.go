@@ -12,6 +12,7 @@ type GroupInterface interface {
 	IsGroupMember(groupID, userID int64) (bool, error)
 	GetGroupMembersCount(groupID int64) (int, error)
 	GetAllGroups() ([]*Group, error)
+	GetGroupMemberIDs(groupID int64) ([]int64, error)
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
@@ -272,4 +273,45 @@ func (repo *Repository) GetGroupMembersCount(groupID int64) (int, error) {
 	}
 
 	return count, nil
+}
+
+// GetGroupMemberIDs は指定された groupID に所属するユーザーIDのスライスを返します
+func (repo *Repository) GetGroupMemberIDs(groupID int64) ([]int64, error) {
+	query := `
+		SELECT
+			user_id
+		FROM
+			group_members
+		WHERE
+			group_id = $1
+		ORDER BY
+			user_id ASC
+	`
+
+	stmt, err := repo.db.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	rows, err := stmt.Query(groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var userIDs []int64
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, err
+		}
+		userIDs = append(userIDs, userID)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return userIDs, nil
 }

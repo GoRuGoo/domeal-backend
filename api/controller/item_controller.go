@@ -14,22 +14,26 @@ import (
 )
 
 type ItemController struct {
-	upgrader  websocket.Upgrader
-	redisRepo model.ItemRedisInterface
-	groupRepo model.GroupInterface
-	groupHubs map[int64]*ItemHub
+	upgrader    websocket.Upgrader
+	redisRepo   model.ItemRedisInterface
+	groupRepo   model.GroupInterface
+	receiptRepo model.ReceiptInterface
+	billingRepo model.BillingInterface
+	groupHubs   map[int64]*ItemHub
 }
 
-func NewItemController(redisRepo model.ItemRedisInterface, groupRepo model.GroupInterface) *ItemController {
+func NewItemController(redisRepo model.ItemRedisInterface, groupRepo model.GroupInterface, receiptRepo model.ReceiptInterface, billingRepo model.BillingInterface) *ItemController {
 	return &ItemController{
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true
 			},
 		},
-		redisRepo: redisRepo,
-		groupRepo: groupRepo,
-		groupHubs: make(map[int64]*ItemHub),
+		redisRepo:   redisRepo,
+		groupRepo:   groupRepo,
+		receiptRepo: receiptRepo,
+		billingRepo: billingRepo,
+		groupHubs:   make(map[int64]*ItemHub),
 	}
 }
 
@@ -275,6 +279,7 @@ func (c *ItemClient) readItemExecution() {
 			// 全ユーザーが完了したかチェック
 			if c.isAllUsersCompleted() {
 				slog.Info("All users completed item selection, persisting to DB", "group_id", c.groupID)
+				c.calculateUserBillingAndStoreToDB()
 				c.persistItemSelectionsToNotification()
 			}
 
@@ -414,4 +419,74 @@ func (c *ItemClient) persistItemSelectionsToNotification() {
 
 	c.hub.broadcast <- msgBytes
 	slog.Info("Notified all clients about item selection completion", "group_id", c.groupID)
+}
+
+func (c *ItemClient) calculateUserBillingAndStoreToDB() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	items, err := c.controller.redisRepo.GetAllItemSelections(ctx, c.groupID)
+	if err != nil {
+		slog.Error("Failed to get item selections from Redis", "error", err, "group_id", c.groupID)
+		return
+	}
+
+	groupMemberIDs, err := c.controller.groupRepo.GetGroupMemberIDs(c.groupID)
+	if err != nil {
+		slog.Error("Failed to get group member IDs", "error", err, "group_id", c.groupID)
+		return
+	}
+
+	userCount := len(groupMemberIDs)
+
+	//すべてのユーザーが負担する請求の合計金額
+	allUsersBilling := 0.0
+
+	// ここにユーザーの請求データを保保存する
+	userBillingMap := make(map[int64]float64)
+
+	for _, item := range items {
+		// 選択しているユーザーがいなければそれはみんなで割り勘するものなのですべてのユーザーが負担するようにする
+		if len(item.SelectedUsers) == 0 {
+			allUsersBilling += (float64(item.Quantity) * float64(item.Price)) / float64(userCount)
+			continue
+		}
+
+		for _, user := range item.SelectedUsers {
+			userID, err := strconv.ParseInt(user["user_id"], 10, 64)
+			if err != nil {
+				slog.Error("Failed to parse user_id", "error", err, "user_id_str", user["user_id"])
+				continue
+			}
+
+			userBillingMap[userID] += (item.Price * float64(item.Quantity)) / float64(len(item.SelectedUsers))
+		}
+	}
+
+	// すでに上記の処理で個別の請求は加算されたので、ここでは全ユーザーで割り勘する分だけを加算する
+	for _, groupMemberID := range groupMemberIDs {
+		userBillingMap[groupMemberID] += allUsersBilling
+	}
+
+	receiptID, uploaderID, err := c.controller.receiptRepo.GetReceiptIDAndUploaderIDByGroupID(c.groupID)
+	if err != nil {
+		slog.Info("Failed to get receiptID and uploaderID", "error", err, "group_id", c.groupID)
+		return
+	}
+
+	tx, err := c.controller.billingRepo.BeginTx(context.Background(), nil)
+	if err != nil {
+		slog.Error("Failed to begin transaction", "error", err, "group_id", c.groupID)
+		return
+	}
+
+	err = c.controller.billingRepo.StoreUserBillings(ctx, tx, c.groupID, receiptID, uploaderID, userBillingMap)
+	if err != nil {
+		tx.Rollback()
+		slog.Error("Failed to store user billings", "error", err, "group_id", c.groupID)
+		return
+	}
+
+	tx.Commit()
+	slog.Info("User billings stored successfully", "group_id", c.groupID)
 }
