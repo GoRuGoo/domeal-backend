@@ -54,9 +54,11 @@ func (r *Router) SetupRouter() http.Handler {
 	groupController := controller.NewGroupController(repo, flowRDB)
 	receiptController := controller.NewReceiptController(repo, repo, flowRDB, itemRDB)
 
-	itemController := controller.NewItemController(itemRDB, repo)
+	itemController := controller.NewItemController(itemRDB, repo, repo, repo)
 
 	flowController := controller.NewFlowController(flowRDB)
+
+	billingController := controller.NewBillingController(repo)
 
 	// TODO: Redisの設定が必要
 	// roleController := controller.NewRoleController(repo, redisRepo)
@@ -82,6 +84,14 @@ func (r *Router) SetupRouter() http.Handler {
 	)
 	mux.Handle("/api/confirm-upload-and-start-ocr",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.ConfirmUploadAndStartOCRHandler)),
+	)
+
+	mux.Handle("/api/get-user-bill",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(billingController.GetUserBill)),
+	)
+
+	mux.Handle("/api/complete-bill",
+		middleware.AuthMiddleware(r.db)(http.HandlerFunc(billingController.CompleteBill)),
 	)
 
 	roleController := controller.NewRoleController(repo, rdb, flowRDB, repo)

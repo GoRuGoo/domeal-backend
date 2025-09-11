@@ -199,6 +199,9 @@ func (c *Client) readExecution() {
 		return nil
 	})
 
+	// 接続時に現在の役割状態をブロードキャスト
+	c.broadcastCurrentState()
+
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
