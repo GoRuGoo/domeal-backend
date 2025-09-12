@@ -3,8 +3,6 @@ package controller
 import (
 	"context"
 	"database/sql"
-	"domeal/middleware"
-	"domeal/model"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -12,6 +10,9 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/GoRuGoo/domeal-backend/api/middleware"
+	"github.com/GoRuGoo/domeal-backend/api/model"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"

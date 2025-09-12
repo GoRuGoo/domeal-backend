@@ -2,11 +2,12 @@ package router
 
 import (
 	"database/sql"
-	"domeal/controller"
-	"domeal/middleware"
-	"domeal/model"
 	"log/slog"
 	"net/http"
+
+	"github.com/GoRuGoo/domeal-backend/api/controller"
+	"github.com/GoRuGoo/domeal-backend/api/middleware"
+	"github.com/GoRuGoo/domeal-backend/api/model"
 )
 
 type Router struct {

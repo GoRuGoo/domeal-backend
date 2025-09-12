@@ -3,13 +3,15 @@ package controller
 import (
 	"context"
 	"database/sql"
-	"domeal/middleware"
-	"domeal/model"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/GoRuGoo/domeal-backend/api/model"
+
+	"github.com/GoRuGoo/domeal-backend/api/middleware"
 )
 
 type GroupController struct {
