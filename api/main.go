@@ -3,6 +3,7 @@ package main
 import (
 	"domeal/model"
 	"domeal/router"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -30,6 +31,8 @@ func main() {
 	defer conn.Close()
 
 	router := router.NewRouter(conn)
-	slog.Info("Starting server on :8080")
-	http.ListenAndServe(":8080", router.SetupRouter())
+
+	port := fmt.Sprintf(":%s", os.Getenv("PORT"))
+	slog.Info("Starting server on ", "port", port)
+	http.ListenAndServe(port, router.SetupRouter())
 }

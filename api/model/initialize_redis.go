@@ -1,10 +1,14 @@
 package model
 
-import "github.com/redis/go-redis/v9"
+import (
+	"os"
+
+	"github.com/redis/go-redis/v9"
+)
 
 func InitRedis() (*redis.Client, error) {
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     "redis:6379",
+		Addr:     os.Getenv("REDIS_HOST"),
 		Password: "",
 		DB:       0,
 	})
