@@ -85,9 +85,6 @@ func (c *GroupController) CreateGroupController(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// TODO:  料理の画像は一旦ダミーをつかう
-	req.MenuImageURL = "https://www.foodiesfeed.com/wp-content/uploads/2023/06/burger-with-melted-cheese.jpg.webp"
-
 	// トランザクション開始
 	tx, err := c.repo.BeginTx(context.Background(), nil)
 	if err != nil {
