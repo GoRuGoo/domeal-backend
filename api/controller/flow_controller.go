@@ -1,12 +1,13 @@
 package controller
 
 import (
-	"domeal/model"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/GoRuGoo/domeal-backend/api/model"
 )
 
 type FlowController struct {

@@ -1,13 +1,14 @@
 package main
 
 import (
-	"domeal/model"
-	"domeal/router"
 	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
+
+	"github.com/GoRuGoo/domeal-backend/api/model"
+	"github.com/GoRuGoo/domeal-backend/api/router"
 )
 
 func main() {

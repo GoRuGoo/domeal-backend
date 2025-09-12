@@ -1,4 +1,4 @@
-module domeal
+module github.com/GoRuGoo/domeal-backend/api
 
 go 1.22.3
 

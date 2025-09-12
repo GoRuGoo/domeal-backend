@@ -13,7 +13,7 @@ import (
 	"os"
 	"strings"
 
-	"domeal/model"
+	"github.com/GoRuGoo/domeal-backend/api/model"
 
 	"github.com/golang-jwt/jwt/v4"
 )

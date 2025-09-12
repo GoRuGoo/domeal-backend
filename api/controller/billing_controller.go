@@ -1,13 +1,14 @@
 package controller
 
 import (
-	"domeal/middleware"
-	"domeal/model"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+
+	"github.com/GoRuGoo/domeal-backend/api/middleware"
+	"github.com/GoRuGoo/domeal-backend/api/model"
 )
 
 type BillWithPayPalLink struct {

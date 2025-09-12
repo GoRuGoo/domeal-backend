@@ -2,14 +2,15 @@ package controller
 
 import (
 	"context"
-	"domeal/middleware"
-	"domeal/model"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/GoRuGoo/domeal-backend/api/middleware"
+	"github.com/GoRuGoo/domeal-backend/api/model"
 
 	"github.com/gorilla/websocket"
 )
