@@ -67,31 +67,31 @@ func (r *Router) SetupRouter() http.Handler {
 	mux := http.NewServeMux()
 
 	// 認証不要エンドポイント
-	mux.HandleFunc("/api/line-callback", userController.LineCallbackHandler)
-	mux.HandleFunc("/api/check-login-status", userController.CheckLoginStatusHandler)
+	mux.HandleFunc("/rest/line-callback", userController.LineCallbackHandler)
+	mux.HandleFunc("/rest/check-login-status", userController.CheckLoginStatusHandler)
 
 	// 認証が必要なエンドポイントは AuthMiddleware で個別にラップ
-	mux.Handle("/api/create-group",
+	mux.Handle("/rest/create-group",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(groupController.CreateGroupController)),
 	)
-	mux.Handle("/api/join-group",
+	mux.Handle("/rest/join-group",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(groupController.JoinGroupController)),
 	)
-	mux.Handle("/api/groups",
+	mux.Handle("/rest/groups",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(groupController.GetGroupsHandler)),
 	)
-	mux.Handle("/api/issue-signed-url",
+	mux.Handle("/rest/issue-signed-url",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.IssueSignedS3URLHandler)),
 	)
-	mux.Handle("/api/confirm-upload-and-start-ocr",
+	mux.Handle("/rest/confirm-upload-and-start-ocr",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(receiptController.ConfirmUploadAndStartOCRHandler)),
 	)
 
-	mux.Handle("/api/get-user-bill",
+	mux.Handle("/rest/get-user-bill",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(billingController.GetUserBill)),
 	)
 
-	mux.Handle("/api/complete-bill",
+	mux.Handle("/rest/complete-bill",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(billingController.CompleteBill)),
 	)
 
@@ -107,11 +107,11 @@ func (r *Router) SetupRouter() http.Handler {
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(itemController.SelectItemController)),
 	)
 
-	mux.Handle("/api/subscribe-flow",
+	mux.Handle("/rest/subscribe-flow",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(flowController.SubscribeFlowHandler)),
 	)
 
-	mux.Handle("/api/publish-flow",
+	mux.Handle("/rest/publish-flow",
 		middleware.AuthMiddleware(r.db)(http.HandlerFunc(flowController.PublishFlowUpdate)),
 	)
 
